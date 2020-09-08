@@ -19,6 +19,7 @@ func (c *connection) Write(b []byte) (int, error) {
 		// do something like log it
 	}
 
+	// Now write the buffer
 	buffer := append(header.Bytes(), b...)
 	return c.conn.Write(buffer)
 }
@@ -31,19 +32,24 @@ func (c *connection) Send(b []byte) error {
 	return nil
 }
 
-func (c *connection) Read() (buf []byte, numBytes int, err error) {
+func (c *connection) Read() ([]byte, int, error) {
+	bufSize, err := c.readHeaderBufSize()
+	_ = err
+	return nil, bufSize, nil
+}
+
+func (c *connection) readHeaderBufSize() (int, error) {
 	if err := c.conn.SetReadDeadline(time.Now().Add(3 * time.Hour)); err != nil {
 		// log it
 	}
 
-	// read header header will test us how long the rest of the content is
 	var header []byte
-	numBytes = 4
+	numBytes := 4
 	for {
 		tmp := make([]byte, numBytes-len(header))
-		n, errRead := c.conn.Read(tmp)
-		if errRead != nil {
-			return nil, numBytes, errRead
+		n, err := c.conn.Read(tmp)
+		if err != nil {
+			return n, err
 		}
 		header = append(header, tmp[:n]...)
 		if numBytes == len(header) {
@@ -51,5 +57,14 @@ func (c *connection) Read() (buf []byte, numBytes int, err error) {
 		}
 	}
 
-	return nil, 4, nil
+	return convertHeaderBytesToInt(header)
+}
+
+func convertHeaderBytesToInt(header []byte) (int, error) {
+	var bufSize uint32
+	if err := binary.Read(bytes.NewReader(header), binary.LittleEndian, &bufSize); err != nil {
+		return 0, err
+	}
+
+	return int(bufSize), nil
 }

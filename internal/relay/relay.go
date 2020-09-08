@@ -57,7 +57,7 @@ func NewRelayServer(port int, password string) *Server {
 func (s *Server) Start(c context.Context) error {
 	// Need to track and remove any relays that are no longer active.
 	go s.runInactiveRelayCleaner(c)
-	return s.runRelayServer(c)
+	return s.startRelayServer(c)
 }
 
 func (s *Server) runInactiveRelayCleaner(c context.Context) {
@@ -73,27 +73,39 @@ func (s *Server) runInactiveRelayCleaner(c context.Context) {
 	}
 }
 
-func (s *Server) runRelayServer(c context.Context) error {
+func (s *Server) startRelayServer(c context.Context) error {
 	var err error
 	s.listener, err = net.Listen("tcp", fmt.Sprintf(":%d", s.port))
 	if err != nil {
 		return err
 	}
 
-	defer func() {
-		_ = s.listener.Close()
-	}()
+	go s.runRelayServer(c)
 
+	return nil
+}
+
+func (s *Server) runRelayServer(c context.Context) {
+	tcpListener := s.listener.(*net.TCPListener)
 	for {
-		connection, err := s.listener.Accept()
-		if err != nil {
-			return err
+
+		select {
+		case <-c.Done():
+			log.Infof("Shutting down relay server...")
+			_ = tcpListener.Close()
+			return
+		default:
+			_ = tcpListener.SetDeadline(time.Now().Add(2 * time.Second))
+			connection, err := tcpListener.Accept()
+			if err != nil {
+				continue
+			}
+			go s.handleConnection(connection, c)
 		}
-		go s.handleConnection(connection)
 	}
 }
 
-func (s *Server) handleConnection(connection net.Conn) {
+func (s *Server) handleConnection(connection net.Conn, c context.Context) {
 	relayKey, err := s.initializeConnection(connection)
 	_ = relayKey
 	_ = err
