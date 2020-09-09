@@ -2,10 +2,13 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/gtarcea/ft/internal/network"
 
 	"github.com/apex/log"
 	pake "github.com/schollz/pake/v2"
@@ -28,6 +31,11 @@ type Relay struct {
 	receiver *Slot
 	opened   time.Time
 	lastUsed time.Time
+}
+
+type Message struct {
+	Command string `json:"command"`
+	Body    []byte `json:"body"`
 }
 
 func NewRelay(senderSlot *Slot, receiverSlot *Slot) *Relay {
@@ -105,10 +113,27 @@ func (s *Server) runRelayServer(c context.Context) {
 	}
 }
 
-func (s *Server) handleConnection(connection net.Conn, c context.Context) {
-	relayKey, err := s.initializeConnection(connection)
-	_ = relayKey
-	_ = err
+func (s *Server) handleConnection(conn net.Conn, c context.Context) {
+	for {
+		select {
+		case <-c.Done():
+			return
+		default:
+			buf, _, err := network.Read(conn)
+			if err != nil {
+				return
+			}
+			var msg Message
+			if err := json.Unmarshal(buf, &msg); err != nil {
+				return
+			}
+
+			switch msg.Command {
+			case "hello":
+				fmt.Println("server got hello msg")
+			}
+		}
+	}
 }
 
 var weakKey = []byte{1, 2, 3}

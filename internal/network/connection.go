@@ -7,11 +7,7 @@ import (
 	"time"
 )
 
-type connection struct {
-	conn net.Conn
-}
-
-func (c *connection) Write(b []byte) (int, error) {
+func Write(conn net.Conn, b []byte) (int, error) {
 	header := new(bytes.Buffer)
 	// write header which is the length of the buffer we are sending
 	err := binary.Write(header, binary.LittleEndian, uint32(len(b)))
@@ -19,27 +15,40 @@ func (c *connection) Write(b []byte) (int, error) {
 		// do something like log it
 	}
 
-	// Now write the buffer
+	// Append header (buffer size) and buffer together and write
 	buffer := append(header.Bytes(), b...)
-	return c.conn.Write(buffer)
+	return conn.Write(buffer)
 }
 
-func (c *connection) Send(b []byte) error {
-	if _, err := c.Write(b); err != nil {
-		return err
+func Read(conn net.Conn) ([]byte, int, error) {
+	bufSize, err := readHeaderBufSize(conn)
+	if err != nil {
+		return nil, 0, err
 	}
 
-	return nil
+	buf := make([]byte, 0)
+	// Loop until we read bufSize or get an error
+	for {
+		// Allocate up to what we have already read, we start at a tmpBuf size equal
+		// to bufSize, and then shorten if we don't read that amount
+		tmpBuf := make([]byte, bufSize-len(buf))
+		n, err := conn.Read(tmpBuf)
+		switch {
+		case err != nil:
+			return nil, 0, err
+
+		default:
+			buf = append(buf, tmpBuf[:n]...)
+			if len(buf) == bufSize {
+				// we've read the amount expected
+				return buf, bufSize, nil
+			}
+		}
+	}
 }
 
-func (c *connection) Read() ([]byte, int, error) {
-	bufSize, err := c.readHeaderBufSize()
-	_ = err
-	return nil, bufSize, nil
-}
-
-func (c *connection) readHeaderBufSize() (int, error) {
-	if err := c.conn.SetReadDeadline(time.Now().Add(3 * time.Hour)); err != nil {
+func readHeaderBufSize(conn net.Conn) (int, error) {
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Hour)); err != nil {
 		// log it
 	}
 
@@ -47,10 +56,11 @@ func (c *connection) readHeaderBufSize() (int, error) {
 	numBytes := 4
 	for {
 		tmp := make([]byte, numBytes-len(header))
-		n, err := c.conn.Read(tmp)
+		n, err := conn.Read(tmp)
 		if err != nil {
 			return n, err
 		}
+
 		header = append(header, tmp[:n]...)
 		if numBytes == len(header) {
 			break
