@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gtarcea/ft/pkg/msgs"
+
 	"github.com/gtarcea/ft/internal/network"
 
 	"github.com/apex/log"
@@ -131,6 +133,12 @@ func (s *Server) handleConnection(conn net.Conn, c context.Context) {
 			switch msg.Command {
 			case "hello":
 				fmt.Println("server got hello msg")
+				var hello msgs.Hello
+				if err := json.Unmarshal(msg.Body, &hello); err != nil {
+					fmt.Println("Unable to parse body")
+					break
+				}
+				//fmt.Printf("Hello %s\n", hello.Name)
 			}
 		}
 	}

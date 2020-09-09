@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gtarcea/ft/pkg/msgs"
+
 	"github.com/gtarcea/ft/internal/network"
 )
 
@@ -33,7 +35,12 @@ func TestServerHelloMsg(t *testing.T) {
 		t.Fatalf("Couldn't connect to server")
 	}
 
-	msg := Message{Command: "hello", Body: []byte{'a'}}
+	hello := msgs.Hello{Role: "receiver"}
+	body, err := json.Marshal(hello)
+	if err != nil {
+		t.Fatalf("Couldn't marshal hello msg")
+	}
+	msg := Message{Command: "hello", Body: body}
 	b, err := json.Marshal(msg)
 	if err != nil {
 		t.Fatalf("Couldn't marshal message")
