@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -13,7 +14,8 @@ import (
 	"github.com/gtarcea/ft/internal/network"
 
 	"github.com/apex/log"
-	pake "github.com/schollz/pake/v2"
+
+	"salsa.debian.org/vasudev/gospake2"
 )
 
 type ConnectorType string
@@ -147,12 +149,7 @@ func (s *Server) handleConnection(conn net.Conn, c context.Context) {
 var weakKey = []byte{1, 2, 3}
 
 func (s *Server) initializeConnection(connection net.Conn) (string, error) {
-	p, err := pake.InitCurve(weakKey, 1, "siec", 1*time.Microsecond)
-	if err != nil {
-		return "", err
-	}
 
-	_ = p
 	return "", nil
 }
 
@@ -190,4 +187,29 @@ func (r Relay) shutdown() {
 	if r.sender != nil && r.sender.connection != nil {
 		_ = r.sender.connection.Close()
 	}
+}
+
+func WritePake(conn net.Conn, key string) error {
+	pw := gospake2.NewPassword(key)
+	spake := gospake2.SPAKE2Symmetric(pw, gospake2.NewIdentityS("abc"))
+	pakeMsgBody := spake.Start()
+	pakeMsg := msgs.PakeMsg{Body: hex.EncodeToString(pakeMsgBody)}
+	j, err := json.Marshal(pakeMsg)
+	if err != nil {
+		return err
+	}
+	_, err = network.Write(conn, j)
+	return err
+}
+
+func ReadPake(pakeMsg msgs.PakeMsg, spake gospake2.SPAKE2) error {
+	otherSideMsg, err := hex.DecodeString(pakeMsg.Body)
+	if err != nil {
+		return err
+	}
+
+	sharedKey, err := spake.Finish(otherSideMsg)
+	_ = sharedKey
+
+	return err
 }

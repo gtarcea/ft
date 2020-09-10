@@ -53,3 +53,20 @@ func TestServerHelloMsg(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	cancel()
 }
+
+func TestServerPakeMsg(t *testing.T) {
+	s := NewRelayServer(10001, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("Failed to start server: %s", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", ":10001", 2*time.Second)
+	if err != nil {
+		t.Fatalf("Couldn't connect to server")
+	}
+
+	_ = conn
+	time.Sleep(2 * time.Second)
+	cancel()
+}

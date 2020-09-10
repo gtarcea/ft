@@ -3,12 +3,15 @@ package relayer
 import (
 	"net"
 	"time"
+
+	"salsa.debian.org/vasudev/gospake2"
 )
 
 type Client struct {
 	relayId    string
 	address    string
 	connection net.Conn
+	spake      *gospake2.SPAKE2
 }
 
 func NewClient(relayId, address string) (*Client, error) {

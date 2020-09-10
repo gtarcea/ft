@@ -17,3 +17,7 @@ type Welcome struct {
 type Goodbye struct {
 	Reason string `json:"reason"`
 }
+
+type PakeMsg struct {
+	Body string `json:"body"`
+}
