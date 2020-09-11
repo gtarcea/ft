@@ -25,16 +25,22 @@ const (
 	Sender                 = "sender"
 )
 
+const RelayPassword = "abc123"
+const RelayAppId = "relay-app-id"
+
 type Slot struct {
 	connection net.Conn
 	mtype      ConnectorType
 }
 
 type Relay struct {
-	sender   *Slot
-	receiver *Slot
-	opened   time.Time
-	lastUsed time.Time
+	sender     *Slot
+	receiver   *Slot
+	spake      *gospake2.SPAKE2
+	derivedKey []byte
+	opened     time.Time
+	lastUsed   time.Time
+	relayID    string
 }
 
 type Message struct {
@@ -133,14 +139,39 @@ func (s *Server) handleConnection(conn net.Conn, c context.Context) {
 			}
 
 			switch msg.Command {
-			case "hello":
-				fmt.Println("server got hello msg")
-				var hello msgs.Hello
-				if err := json.Unmarshal(msg.Body, &hello); err != nil {
+			case "pake":
+				fmt.Println("server got pakeMsg msg")
+				var pakeMsg msgs.Pake
+				if err := json.Unmarshal(msg.Body, &pakeMsg); err != nil {
 					fmt.Println("Unable to parse body")
 					break
 				}
-				//fmt.Printf("Hello %s\n", hello.Name)
+
+				pw := gospake2.NewPassword(RelayPassword)
+				spake := gospake2.SPAKE2Symmetric(pw, gospake2.NewIdentityS(RelayAppId))
+				pakeMsgBody := spake.Start()
+				pakeMsg2 := msgs.Pake{Body: pakeMsgBody}
+				var sharedKey, err = spake.Finish(pakeMsg.Body)
+				if err != nil {
+					fmt.Println("Spake auth (finish) failed", err)
+					_ = conn.Close()
+					return
+				}
+
+				pakeMsg2Bytes, err := json.Marshal(pakeMsg2)
+				msg2 := Message{Command: "pake", Body: pakeMsg2Bytes}
+				b, _ := json.Marshal(msg2)
+				if _, err := network.Write(conn, b); err != nil {
+					fmt.Println("Network write failed")
+					_ = conn.Close()
+					return
+				}
+
+				fmt.Printf("server shared key as string = %s\n", hex.EncodeToString(sharedKey))
+
+				_ = sharedKey
+
+				//fmt.Printf("Hello %s\n", pakeMsg.Name)
 			}
 		}
 	}
@@ -189,27 +220,27 @@ func (r Relay) shutdown() {
 	}
 }
 
-func WritePake(conn net.Conn, key string) error {
-	pw := gospake2.NewPassword(key)
-	spake := gospake2.SPAKE2Symmetric(pw, gospake2.NewIdentityS("abc"))
-	pakeMsgBody := spake.Start()
-	pakeMsg := msgs.PakeMsg{Body: hex.EncodeToString(pakeMsgBody)}
-	j, err := json.Marshal(pakeMsg)
-	if err != nil {
-		return err
-	}
-	_, err = network.Write(conn, j)
-	return err
-}
-
-func ReadPake(pakeMsg msgs.PakeMsg, spake gospake2.SPAKE2) error {
-	otherSideMsg, err := hex.DecodeString(pakeMsg.Body)
-	if err != nil {
-		return err
-	}
-
-	sharedKey, err := spake.Finish(otherSideMsg)
-	_ = sharedKey
-
-	return err
-}
+//func WritePake(conn net.Conn, key string) error {
+//	pw := gospake2.NewPassword(key)
+//	spake := gospake2.SPAKE2Symmetric(pw, gospake2.NewIdentityS("abc"))
+//	pakeMsgBody := spake.Start()
+//	pakeMsg := msgs.PakeMsg{Body: hex.EncodeToString(pakeMsgBody)}
+//	j, err := json.Marshal(pakeMsg)
+//	if err != nil {
+//		return err
+//	}
+//	_, err = network.Write(conn, j)
+//	return err
+//}
+//
+//func ReadPake(pakeMsg msgs.PakeMsg, spake gospake2.SPAKE2) error {
+//	otherSideMsg, err := hex.DecodeString(pakeMsg.Body)
+//	if err != nil {
+//		return err
+//	}
+//
+//	sharedKey, err := spake.Finish(otherSideMsg)
+//	_ = sharedKey
+//
+//	return err
+//}

@@ -4,20 +4,17 @@ const RoleReceiver = "receiver"
 const RoleSender = "sender"
 
 type Hello struct {
-	ExternalIPs []string `json:"external_ips"`
-	Role        string   `json:"role"`
-	Key         string   `json:"key"`
+	PakeMsg []byte `json:"pake_msg"`
 }
 
 type Welcome struct {
-	Messages []string `json:"messages"`
-	First    bool     `json:"first"`
+	PakeMsg []byte `json:"pake_msg"`
 }
 
 type Goodbye struct {
 	Reason string `json:"reason"`
 }
 
-type PakeMsg struct {
-	Body string `json:"body"`
+type Pake struct {
+	Body []byte `json:"body"`
 }

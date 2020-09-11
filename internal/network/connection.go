@@ -2,6 +2,9 @@ package network
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"encoding/binary"
 	"net"
 	"time"
@@ -18,6 +21,30 @@ func Write(conn net.Conn, b []byte) (int, error) {
 	// Append header (buffer size) and buffer together and write
 	buffer := append(header.Bytes(), b...)
 	return conn.Write(buffer)
+}
+
+func WriteEncrypted(conn net.Conn, b []byte, key []byte) (int, error) {
+	var (
+		err         error
+		cipherBlock cipher.Block
+		gcm         cipher.AEAD
+	)
+	nonce := make([]byte, 12)
+	if _, err := rand.Read(nonce); err != nil {
+		return 0, err
+	}
+
+	if cipherBlock, err = aes.NewCipher(key); err != nil {
+		return 0, err
+	}
+
+	if gcm, err = cipher.NewGCM(cipherBlock); err != nil {
+		return 0, err
+	}
+
+	encryptedBytes := gcm.Seal(nil, nonce, b, nil)
+	encryptedBytes = append(nonce, encryptedBytes...)
+	return Write(conn, encryptedBytes)
 }
 
 func Read(conn net.Conn) ([]byte, int, error) {
@@ -77,4 +104,30 @@ func convertHeaderBytesToInt(header []byte) (int, error) {
 	}
 
 	return int(bufSize), nil
+}
+
+func ReadDecrypt(conn net.Conn, key []byte) ([]byte, int, error) {
+	var (
+		cipherBlock      cipher.Block
+		gcm              cipher.AEAD
+		err              error
+		encryptedBytes   []byte
+		unencryptedBytes []byte
+		n                int
+	)
+
+	if encryptedBytes, n, err = Read(conn); err != nil {
+		return nil, 0, err
+	}
+
+	if cipherBlock, err = aes.NewCipher(key); err != nil {
+		return nil, 0, err
+	}
+
+	if gcm, err = cipher.NewGCM(cipherBlock); err != nil {
+		return nil, 0, err
+	}
+
+	unencryptedBytes, err = gcm.Open(nil, encryptedBytes[:12], encryptedBytes[:12], nil)
+	return unencryptedBytes, n - 12, err
 }

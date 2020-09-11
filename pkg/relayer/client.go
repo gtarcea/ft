@@ -12,6 +12,9 @@ type Client struct {
 	address    string
 	connection net.Conn
 	spake      *gospake2.SPAKE2
+	sharedKey  string
+	password   string
+	appID      string
 }
 
 func NewClient(relayId, address string) (*Client, error) {
