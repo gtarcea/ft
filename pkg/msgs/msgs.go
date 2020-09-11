@@ -4,7 +4,8 @@ const RoleReceiver = "receiver"
 const RoleSender = "sender"
 
 type Hello struct {
-	PakeMsg []byte `json:"pake_msg"`
+	RelayKey       string `json:"relay_key"`
+	ConnectionType string `json:"connection_type"`
 }
 
 type Welcome struct {

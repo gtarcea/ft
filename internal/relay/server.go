@@ -18,11 +18,9 @@ import (
 	"salsa.debian.org/vasudev/gospake2"
 )
 
-type ConnectorType string
-
 const (
-	Receiver ConnectorType = "receiver"
-	Sender                 = "sender"
+	Receiver = "receiver"
+	Sender   = "sender"
 )
 
 const RelayPassword = "abc123"
@@ -30,7 +28,7 @@ const RelayAppId = "relay-app-id"
 
 type Slot struct {
 	connection net.Conn
-	mtype      ConnectorType
+	mtype      string
 }
 
 type Relay struct {
@@ -53,12 +51,12 @@ func NewRelay(senderSlot *Slot, receiverSlot *Slot) *Relay {
 }
 
 type relayList struct {
-	relays map[string]Relay
+	relays map[string]*Relay
 	sync.Mutex
 }
 
 type Server struct {
-	relayList *relayList
+	relayList relayList
 	port      int
 	password  string
 	listener  net.Listener
@@ -68,7 +66,7 @@ func NewRelayServer(port int, password string) *Server {
 	return &Server{
 		port:      port,
 		password:  password,
-		relayList: &relayList{relays: make(map[string]Relay)},
+		relayList: relayList{relays: make(map[string]*Relay)},
 	}
 }
 
@@ -124,64 +122,138 @@ func (s *Server) runRelayServer(c context.Context) {
 }
 
 func (s *Server) handleConnection(conn net.Conn, c context.Context) {
+	var (
+		sharedKey []byte
+	)
+
 	for {
 		select {
 		case <-c.Done():
 			return
 		default:
-			buf, _, err := network.Read(conn)
-			if err != nil {
-				return
+			var (
+				msg Message
+				err error
+				buf []byte
+			)
+			if sharedKey == nil {
+				buf, _, err = network.Read(conn)
+				if err != nil {
+					continue
+				}
+			} else {
+				buf, _, err = network.ReadDecrypt(conn, sharedKey)
+				if err != nil {
+					continue
+				}
 			}
-			var msg Message
+
 			if err := json.Unmarshal(buf, &msg); err != nil {
-				return
+				continue
 			}
 
 			switch msg.Command {
 			case "pake":
-				fmt.Println("server got pakeMsg msg")
-				var pakeMsg msgs.Pake
-				if err := json.Unmarshal(msg.Body, &pakeMsg); err != nil {
-					fmt.Println("Unable to parse body")
-					break
-				}
-
-				pw := gospake2.NewPassword(RelayPassword)
-				spake := gospake2.SPAKE2Symmetric(pw, gospake2.NewIdentityS(RelayAppId))
-				pakeMsgBody := spake.Start()
-				pakeMsg2 := msgs.Pake{Body: pakeMsgBody}
-				var sharedKey, err = spake.Finish(pakeMsg.Body)
+				sharedKey, err = getSharedKeyFromPakeExchange(conn, msg)
 				if err != nil {
-					fmt.Println("Spake auth (finish) failed", err)
 					_ = conn.Close()
 					return
 				}
-
-				pakeMsg2Bytes, err := json.Marshal(pakeMsg2)
-				msg2 := Message{Command: "pake", Body: pakeMsg2Bytes}
-				b, _ := json.Marshal(msg2)
-				if _, err := network.Write(conn, b); err != nil {
-					fmt.Println("Network write failed")
-					_ = conn.Close()
-					return
-				}
-
 				fmt.Printf("server shared key as string = %s\n", hex.EncodeToString(sharedKey))
-
-				_ = sharedKey
-
-				//fmt.Printf("Hello %s\n", pakeMsg.Name)
+			case "hello":
+				err := s.handleHelloMessage(conn, msg)
+				if err != nil {
+					continue
+				}
 			}
 		}
 	}
 }
 
-var weakKey = []byte{1, 2, 3}
+func getSharedKeyFromPakeExchange(conn net.Conn, msg Message) ([]byte, error) {
+	fmt.Println("server got pakeMsg msg")
+	var pakeMsg msgs.Pake
+	if err := json.Unmarshal(msg.Body, &pakeMsg); err != nil {
+		fmt.Println("Unable to parse body")
+		return nil, err
+	}
 
-func (s *Server) initializeConnection(connection net.Conn) (string, error) {
+	pw := gospake2.NewPassword(RelayPassword)
+	spake := gospake2.SPAKE2Symmetric(pw, gospake2.NewIdentityS(RelayAppId))
+	pakeMsgBody := spake.Start()
+	pakeMsg2 := msgs.Pake{Body: pakeMsgBody}
+	sharedKey, err := spake.Finish(pakeMsg.Body)
+	if err != nil {
+		fmt.Println("Spake auth (finish) failed", err)
+		_ = conn.Close()
+		return nil, err
+	}
 
-	return "", nil
+	var pakeMsg2Bytes []byte
+	pakeMsg2Bytes, err = json.Marshal(pakeMsg2)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	msg2 := Message{Command: "pake", Body: pakeMsg2Bytes}
+	b, _ := json.Marshal(msg2)
+	if _, err := network.Write(conn, b); err != nil {
+		fmt.Println("Network write failed")
+		_ = conn.Close()
+		return nil, err
+	}
+
+	return sharedKey, nil
+}
+
+func (s *Server) handleHelloMessage(conn net.Conn, msg Message) error {
+	var hello msgs.Hello
+	if err := json.Unmarshal(msg.Body, &hello); err != nil {
+		return err
+	}
+	s.relayList.Lock()
+	defer s.relayList.Unlock()
+	relay, ok := s.relayList.relays[hello.RelayKey]
+	switch ok {
+	case true:
+		// Found an existing relay
+		switch {
+		case hello.ConnectionType == Receiver && relay.receiver != nil:
+			return fmt.Errorf("already have a receiver")
+		case hello.ConnectionType == Sender && relay.sender != nil:
+			return fmt.Errorf("already have a sender")
+		case relay.receiver != nil && relay.sender != nil:
+			return fmt.Errorf("relay slots full")
+		case hello.ConnectionType == Receiver:
+			relay.receiver = &Slot{connection: conn, mtype: Receiver}
+		case hello.ConnectionType == Sender:
+			relay.sender = &Slot{connection: conn, mtype: Sender}
+		default:
+			// should never happen
+		}
+
+		if relay.receiver != nil && relay.sender != nil {
+			// connect them together
+		}
+
+	case false:
+		relay = &Relay{
+			opened:   time.Now(),
+			lastUsed: time.Now(),
+			relayID:  hello.RelayKey,
+		}
+
+		slot := &Slot{connection: conn, mtype: hello.ConnectionType}
+		if hello.ConnectionType == Sender {
+			relay.sender = slot
+		} else {
+			relay.receiver = slot
+		}
+
+		s.relayList.relays[hello.RelayKey] = relay
+
+	}
+	return nil
 }
 
 func (s *Server) removeInactiveRelays() {
@@ -190,8 +262,8 @@ func (s *Server) removeInactiveRelays() {
 	}
 }
 
-func (s *Server) gatherRelaysToRemove() []Relay {
-	var relaysToRemove []Relay
+func (s *Server) gatherRelaysToRemove() []*Relay {
+	var relaysToRemove []*Relay
 
 	s.relayList.Lock()
 	defer s.relayList.Unlock()
@@ -206,11 +278,11 @@ func (s *Server) gatherRelaysToRemove() []Relay {
 	return relaysToRemove
 }
 
-func (r Relay) isInactive() bool {
+func (r *Relay) isInactive() bool {
 	return time.Since(r.lastUsed) > 10*time.Minute
 }
 
-func (r Relay) shutdown() {
+func (r *Relay) shutdown() {
 	if r.receiver != nil && r.receiver.connection != nil {
 		_ = r.receiver.connection.Close()
 	}
@@ -219,28 +291,3 @@ func (r Relay) shutdown() {
 		_ = r.sender.connection.Close()
 	}
 }
-
-//func WritePake(conn net.Conn, key string) error {
-//	pw := gospake2.NewPassword(key)
-//	spake := gospake2.SPAKE2Symmetric(pw, gospake2.NewIdentityS("abc"))
-//	pakeMsgBody := spake.Start()
-//	pakeMsg := msgs.PakeMsg{Body: hex.EncodeToString(pakeMsgBody)}
-//	j, err := json.Marshal(pakeMsg)
-//	if err != nil {
-//		return err
-//	}
-//	_, err = network.Write(conn, j)
-//	return err
-//}
-//
-//func ReadPake(pakeMsg msgs.PakeMsg, spake gospake2.SPAKE2) error {
-//	otherSideMsg, err := hex.DecodeString(pakeMsg.Body)
-//	if err != nil {
-//		return err
-//	}
-//
-//	sharedKey, err := spake.Finish(otherSideMsg)
-//	_ = sharedKey
-//
-//	return err
-//}
