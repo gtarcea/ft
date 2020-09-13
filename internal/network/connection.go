@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"time"
 )
@@ -106,7 +107,7 @@ func convertHeaderBytesToInt(header []byte) (int, error) {
 	return int(bufSize), nil
 }
 
-func ReadDecrypt(conn net.Conn, key []byte) ([]byte, int, error) {
+func ReadAndDecrypt(conn net.Conn, key []byte) ([]byte, int, error) {
 	var (
 		cipherBlock      cipher.Block
 		gcm              cipher.AEAD
@@ -117,17 +118,23 @@ func ReadDecrypt(conn net.Conn, key []byte) ([]byte, int, error) {
 	)
 
 	if encryptedBytes, n, err = Read(conn); err != nil {
+		fmt.Println("Read failed")
 		return nil, 0, err
 	}
 
 	if cipherBlock, err = aes.NewCipher(key); err != nil {
+		fmt.Println("NewCipher failed")
 		return nil, 0, err
 	}
 
 	if gcm, err = cipher.NewGCM(cipherBlock); err != nil {
+		fmt.Println("NewGCM failed")
 		return nil, 0, err
 	}
 
-	unencryptedBytes, err = gcm.Open(nil, encryptedBytes[:12], encryptedBytes[:12], nil)
+	unencryptedBytes, err = gcm.Open(nil, encryptedBytes[:12], encryptedBytes[12:], nil)
+	if err != nil {
+		fmt.Println("gcm.Open failed")
+	}
 	return unencryptedBytes, n - 12, err
 }

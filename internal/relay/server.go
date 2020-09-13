@@ -103,8 +103,8 @@ func (s *Server) startRelayServer(c context.Context) error {
 
 func (s *Server) runRelayServer(c context.Context) {
 	tcpListener := s.listener.(*net.TCPListener)
+ReadLoop:
 	for {
-
 		select {
 		case <-c.Done():
 			log.Infof("Shutting down relay server...")
@@ -114,7 +114,10 @@ func (s *Server) runRelayServer(c context.Context) {
 			_ = tcpListener.SetDeadline(time.Now().Add(2 * time.Second))
 			connection, err := tcpListener.Accept()
 			if err != nil {
-				continue
+				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
+					continue ReadLoop
+				}
+				return
 			}
 			go s.handleConnection(connection, c)
 		}
@@ -142,8 +145,10 @@ func (s *Server) handleConnection(conn net.Conn, c context.Context) {
 					continue
 				}
 			} else {
-				buf, _, err = network.ReadDecrypt(conn, sharedKey)
+				fmt.Printf("Doing network.ReadAndDecrypt\n")
+				buf, _, err = network.ReadAndDecrypt(conn, sharedKey)
 				if err != nil {
+					fmt.Printf("ReadAndDecrypt got err: %s\n", err)
 					continue
 				}
 			}
@@ -211,6 +216,7 @@ func (s *Server) handleHelloMessage(conn net.Conn, msg Message) error {
 	if err := json.Unmarshal(msg.Body, &hello); err != nil {
 		return err
 	}
+	fmt.Printf("Got hello with relaykey: %s and connection type: %s\n", hello.RelayKey, hello.ConnectionType)
 	s.relayList.Lock()
 	defer s.relayList.Unlock()
 	relay, ok := s.relayList.relays[hello.RelayKey]

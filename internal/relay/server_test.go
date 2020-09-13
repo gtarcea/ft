@@ -83,6 +83,22 @@ func TestServerPakeMsg(t *testing.T) {
 
 	fmt.Printf("Client shared key as string = %s\n", hex.EncodeToString(sharedKey))
 
+	hello := msgs.Hello{RelayKey: "my-relay-key", ConnectionType: Sender}
+	helloBytes, err := json.Marshal(hello)
+	if err != nil {
+		t.Fatalf("Unable to marshal hello message: %s", err)
+	}
+	msg3 := Message{Command: "hello", Body: helloBytes}
+
+	msg3Bytes, err := json.Marshal(msg3)
+	if err != nil {
+		t.Fatalf("Unable to marshal msg3Bytes: %s", err)
+	}
+
+	if _, err = network.WriteEncrypted(conn, msg3Bytes, sharedKey); err != nil {
+		t.Fatalf("Failed writing encrypted message: %s", err)
+	}
+
 	time.Sleep(3 * time.Second)
 	cancel()
 }
