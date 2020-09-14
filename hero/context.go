@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-
-	"github.com/gtarcea/ft/hero/internal/network"
 )
 
 type Context interface {
@@ -21,6 +19,8 @@ type Context interface {
 	Hero() *Hero
 	Conn() net.Conn
 	JSON(string, interface{}) error
+	WriteMsg(action string, body interface{}) error
+	ReadMsg(i interface{}) error
 }
 
 type ctx struct {
@@ -88,29 +88,19 @@ func (c *ctx) Conn() net.Conn {
 }
 
 func (c *ctx) JSON(action string, value interface{}) error {
-	_, err := c.writeMsg(action, value)
+	_, err := WriteMsgToConn(c.conn, action, value, c.encryptionOn, c.encryptionKey)
 	return err
 }
 
-func (c *ctx) writeMsg(action string, body interface{}) (int, error) {
-	b, err := json.Marshal(body)
-	if err != nil {
-		return 0, err
-	}
-
-	m := Message{Action: action, Body: b}
-	msgBytes, err := json.Marshal(m)
-	if err != nil {
-		return 0, err
-	}
-
-	return c.write(msgBytes)
+func (c *ctx) WriteMsg(action string, value interface{}) error {
+	return c.JSON(action, value)
 }
 
-func (c *ctx) write(b []byte) (int, error) {
-	if c.encryptionOn {
-		return network.WriteEncrypted(c.conn, b, c.encryptionKey)
+func (c *ctx) ReadMsg(i interface{}) error {
+	msg, err := ReadMsgFromConn(c.conn, c.encryptionOn, c.encryptionKey)
+	if err != nil {
+		return err
 	}
 
-	return network.Write(c.conn, b)
+	return json.Unmarshal(msg.Body, i)
 }
