@@ -28,11 +28,6 @@ type action struct {
 
 type HandlerFunc func(Context) error
 
-type Message struct {
-	Action string `json:"action"`
-	Body   []byte `json:"body"`
-}
-
 func NewHero(address string) *Hero {
 	return &Hero{
 		Address:       address,
@@ -52,6 +47,7 @@ func defaultDecrypterFunc(key []byte, buf []byte) ([]byte, error) {
 
 func (h *Hero) Start(ctx context.Context) error {
 	var err error
+	h.context = ctx
 	if h.listener, err = net.Listen("tcp", h.Address); err != nil {
 		return err
 	}
