@@ -14,6 +14,20 @@ import (
 
 ///////////////// Write ///////////////////
 
+func WriteErrorToConn(conn net.Conn, err error, isEncrypted bool, encryptionKey []byte) (int, error) {
+	m := Message{Error: fmt.Sprintf("%s", err)}
+	msgBytes, err := json.Marshal(m)
+	if err != nil {
+		return 0, err
+	}
+
+	if isEncrypted {
+		return WriteEncryptedToConn(conn, msgBytes, encryptionKey)
+	}
+
+	return WriteToConn(conn, msgBytes)
+}
+
 func WriteMsgToConn(conn net.Conn, action string, body interface{}, isEncrypted bool, encryptionKey []byte) (int, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
