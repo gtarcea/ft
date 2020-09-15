@@ -41,23 +41,20 @@ func (s *Server2) authenticateHandler(c hero2.Context) error {
 	pw := gospake2.NewPassword(RelayPassword)
 	spake := gospake2.SPAKE2Symmetric(pw, gospake2.NewIdentityS(RelayAppId))
 	pakeMsgBody := spake.Start()
-	pakeMsg2 := msgs.Pake{Body: pakeMsgBody}
 	sharedKey, err := spake.Finish(pakeMsg.Body)
 
 	if err != nil {
 		fmt.Println("Spake auth (finish) failed", err)
 		return err
 	}
-
+	pakeMsg2 := msgs.Pake{Body: pakeMsgBody}
 	if err := c.JSON("pake", pakeMsg2); err != nil {
 		fmt.Println("failed writing return pake msg:", err)
 		return err
 	}
 
 	c.SetEncryptionKey(sharedKey)
-	_ = c.TurnEncryptionOn()
-
-	return nil
+	return c.TurnEncryptionOn()
 }
 
 func (s *Server2) helloHandler(c hero2.Context) error {
