@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gtarcea/ft/hero"
+
 	"salsa.debian.org/vasudev/gospake2"
 
 	"github.com/gtarcea/ft/pkg/msgs"
@@ -17,23 +19,28 @@ import (
 )
 
 func TestServerStartStop(t *testing.T) {
-	s := NewRelayServer(10001, "")
+	s := NewRelayServer2(":10001", "")
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := s.Start(ctx); err != nil {
-		t.Fatalf("Failed to start server: %s", err)
-	}
+	go func() {
+		if err := s.Start(ctx); err != nil {
+			t.Fatalf("Failed to start server: %s", err)
+		}
+	}()
 	time.Sleep(1 * time.Second)
 	cancel()
 	time.Sleep(3 * time.Second)
 }
 
 func TestServerPakeMsg(t *testing.T) {
-	s := NewRelayServer(10001, "")
+	s := NewRelayServer2(":10001", "")
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := s.Start(ctx); err != nil {
-		t.Fatalf("Failed to start server: %s", err)
-	}
+	go func() {
+		if err := s.Start(ctx); err != nil {
+			t.Fatalf("Failed to start server: %s", err)
+		}
+	}()
 
+	time.Sleep(1 * time.Second)
 	conn, err := net.DialTimeout("tcp", ":10001", 2*time.Second)
 	if err != nil {
 		t.Fatalf("Couldn't connect to server")
@@ -47,7 +54,7 @@ func TestServerPakeMsg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Couldn't marshal pake1 msg")
 	}
-	msg := Message{Command: "pake", Body: body}
+	msg := hero.Message{Action: "pake", Body: body}
 	b, err := json.Marshal(msg)
 	if err != nil {
 		t.Fatalf("Couldn't marshal message")
@@ -62,13 +69,13 @@ func TestServerPakeMsg(t *testing.T) {
 		t.Fatalf("Unable to read response")
 	}
 
-	var msg2 Message
+	var msg2 hero.Message
 	if err := json.Unmarshal(buf, &msg2); err != nil {
 		t.Fatalf("Unable to process message")
 	}
 
-	if msg2.Command != "pake" {
-		t.Fatalf("Msg wasn't welcome, got %s instead", msg2.Command)
+	if msg2.Action != "pake" {
+		t.Fatalf("Msg wasn't pake, got %s instead", msg2.Action)
 	}
 
 	var pake2 msgs.Pake
@@ -88,7 +95,7 @@ func TestServerPakeMsg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to marshal hello message: %s", err)
 	}
-	msg3 := Message{Command: "hello", Body: helloBytes}
+	msg3 := hero.Message{Action: "hello", Body: helloBytes}
 
 	msg3Bytes, err := json.Marshal(msg3)
 	if err != nil {
