@@ -17,6 +17,7 @@ type Hero struct {
 	listener      net.Listener
 	context       context.Context
 	actions       map[string]*action
+	middleware    []HandlerFunc
 	EncrypterFunc EncrypterFunc
 	DecrypterFunc DecrypterFunc
 }
@@ -81,6 +82,10 @@ AcceptLoop:
 
 func (h *Hero) Shutdown() error {
 	return nil
+}
+
+func (h *Hero) AddMiddleware(handler HandlerFunc) {
+	h.middleware = append(h.middleware, handler)
 }
 
 func (h *Hero) Action(name string, handler HandlerFunc) {

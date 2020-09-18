@@ -47,12 +47,32 @@ func (c *connection) handleConnection() {
 }
 
 func (c *connection) runMsgAction(msg *Message) error {
-	if action, ok := c.ctx.hero.actions[msg.Action]; ok && action != nil {
+	if action := c.getActionForMessageAction(msg.Action); action != nil {
 		c.ctx.msg = msg
+		if err := c.runMiddleware(); err != nil {
+			return err
+		}
 		return action.handler(c.ctx)
 	}
 
 	return fmt.Errorf("no such action: %s", msg.Action)
+}
+
+func (c *connection) getActionForMessageAction(msgAction string) *action {
+	if action, ok := c.ctx.hero.actions[msgAction]; ok && action != nil {
+		return action
+	}
+
+	return nil
+}
+
+func (c *connection) runMiddleware() error {
+	for i := len(c.ctx.hero.middleware) - 1; i > 0; i-- {
+		if err := c.ctx.hero.middleware[i](c.ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *connection) readMsg() (*Message, error) {

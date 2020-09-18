@@ -28,6 +28,7 @@ func (s *Server2) Start(c context.Context) error {
 	hero := hero2.NewHero(s.address)
 	hero.Action("pake", s.authenticateHandler)
 	hero.Action("hello", s.helloHandler)
+	hero.Action("ready", s.readyHandler)
 	return hero.Start(c)
 }
 
@@ -67,9 +68,9 @@ func (s *Server2) helloHandler(c hero2.Context) error {
 
 	s.relayList.Lock()
 	defer s.relayList.Unlock()
-	relay, ok := s.relayList.relays[hello.RelayKey]
-	switch ok {
-	case true:
+	relay, foundRelay := s.relayList.relays[hello.RelayKey]
+
+	if foundRelay {
 		// Found an existing relay
 		switch {
 		case hello.ConnectionType == Receiver && relay.receiver != nil:
@@ -86,26 +87,29 @@ func (s *Server2) helloHandler(c hero2.Context) error {
 			// should never happen
 		}
 
-		if relay.receiver != nil && relay.sender != nil {
-			// connect them together
-		}
-
-	case false:
-		relay = &Relay{
-			opened:   time.Now(),
-			lastUsed: time.Now(),
-			relayID:  hello.RelayKey,
-		}
-
-		slot := &Slot{connection: c.Conn(), mtype: hello.ConnectionType}
-		if hello.ConnectionType == Sender {
-			relay.sender = slot
-		} else {
-			relay.receiver = slot
-		}
-
-		s.relayList.relays[hello.RelayKey] = relay
-
+		return nil
 	}
+
+	// No relay found so create one
+
+	relay = &Relay{
+		opened:   time.Now(),
+		lastUsed: time.Now(),
+		relayID:  hello.RelayKey,
+	}
+
+	slot := &Slot{connection: c.Conn(), mtype: hello.ConnectionType}
+	if hello.ConnectionType == Sender {
+		relay.sender = slot
+	} else {
+		relay.receiver = slot
+	}
+
+	s.relayList.relays[hello.RelayKey] = relay
+
+	return nil
+}
+
+func (s *Server2) readyHandler(c hero2.Context) error {
 	return nil
 }
