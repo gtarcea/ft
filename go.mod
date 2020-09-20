@@ -8,5 +8,6 @@ require (
 	github.com/spf13/cobra v1.0.0
 	github.com/spf13/viper v1.7.1
 	golang.org/x/crypto v0.0.0-20200604202706-70a84ac30bf9 // indirect
+	golang.org/x/net v0.0.0-20190620200207-3b0461eec859
 	salsa.debian.org/vasudev/gospake2 v0.0.0-20180813171123-adcc69dd31d5
 )
