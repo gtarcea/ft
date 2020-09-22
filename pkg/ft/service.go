@@ -41,10 +41,12 @@ func (s *ServiceDiscoverer) FindServices(ctx context.Context, payload []byte) ([
 	}
 	defer conn.Close()
 	packetConn := s.createPacketConn(conn)
-	if err := s.setupInterfaces(packetConn); err != nil {
+	networkInterfaces, err := net.Interfaces()
+	if err != nil {
 		return nil, err
 	}
-	servicesFound := s.broadcastAndCollectLoop(packetConn)
+	s.setupInterfaces(packetConn, networkInterfaces)
+	servicesFound := s.broadcastAndCollectLoop(packetConn, networkInterfaces)
 	return servicesFound, nil
 }
 
@@ -56,32 +58,24 @@ func (s *ServiceDiscoverer) createPacketConn(conn net.PacketConn) NetPacketConn 
 	return PacketConn4{PacketConn: ipv4.NewPacketConn(conn)}
 }
 
-func (s *ServiceDiscoverer) setupInterfaces(packetConn NetPacketConn) error {
-	networkInterfaces, err := net.Interfaces()
-	if err != nil {
-		return err
-	}
-
+func (s *ServiceDiscoverer) setupInterfaces(packetConn NetPacketConn, networkInterfaces []net.Interface) {
 	group := net.ParseIP(s.MulticastAddress)
 	for _, ni := range networkInterfaces {
 		_ = packetConn.JoinGroup(&ni, &net.UDPAddr{IP: group, Port: s.Port})
 	}
-
-	return nil
 }
 
-func (s *ServiceDiscoverer) broadcastAndCollectLoop(packetConn NetPacketConn) []Service {
+func (s *ServiceDiscoverer) broadcastAndCollectLoop(packetConn NetPacketConn, interfaces []net.Interface) []Service {
 	var servicesFound []Service
-	interfaces, _ := net.Interfaces()
 	udpAddr := &net.UDPAddr{IP: net.ParseIP(s.MulticastAddress), Port: s.Port}
 	startingTime := time.Now()
 BroadcastLoop:
 	for {
+		broadcast(packetConn, s.payload, interfaces, udpAddr)
+
 		if maxServicesFound(servicesFound, s.MaxServices) {
 			break
 		}
-
-		broadcast(packetConn, s.payload, interfaces, udpAddr)
 
 		if discoveryDurationReached(startingTime, s.TimeLimit) {
 			break
