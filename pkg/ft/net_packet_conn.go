@@ -8,6 +8,7 @@ import (
 )
 
 type NetPacketConn interface {
+	Close() error
 	JoinGroup(ifi *net.Interface, group net.Addr) error
 	SetMulticastInterface(ini *net.Interface) error
 	SetMulticastTTL(int) error
