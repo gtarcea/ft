@@ -30,23 +30,24 @@ func (s *ServiceDiscoverer) FindServices(ctx context.Context, payload []byte) ([
 	s.ctx = ctx
 	s.payload = payload
 	addr := net.JoinHostPort(s.MulticastAddress, fmt.Sprintf("%d", s.Port))
-	network := "udp4"
-	if s.UseIPV6 {
-		network = "udp6"
-	}
 
-	conn, err := net.ListenPacket(network, addr)
+	conn, err := net.ListenPacket(s.getUDPProtocolVersion(), addr)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+
 	packetConn := s.createPacketConn(conn)
+
 	networkInterfaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
 	}
+
 	s.setupInterfaces(packetConn, networkInterfaces)
+
 	servicesFound := s.broadcastAndCollectLoop(packetConn, networkInterfaces)
+
 	return servicesFound, nil
 }
 
@@ -69,6 +70,10 @@ func (s *ServiceDiscoverer) broadcastAndCollectLoop(packetConn NetPacketConn, in
 	var servicesFound []Service
 	udpAddr := &net.UDPAddr{IP: net.ParseIP(s.MulticastAddress), Port: s.Port}
 	startingTime := time.Now()
+
+	// Start up a listener that will collect the responses from services that respond to the broadcast
+	go s.listenForAndCollectResponses(interfaces)
+
 BroadcastLoop:
 	for {
 		broadcast(packetConn, s.payload, interfaces, udpAddr)
@@ -119,6 +124,48 @@ func discoveryDurationReached(startingTime time.Time, durationLimit time.Duratio
 	}
 
 	return time.Since(startingTime) > durationLimit
+}
+
+func (s *ServiceDiscoverer) listenForAndCollectResponses(interfaces []net.Interface) {
+	addr := net.JoinHostPort(s.MulticastAddress, fmt.Sprintf("%d", s.Port))
+
+	conn, err := net.ListenPacket(s.getUDPProtocolVersion(), addr)
+	if err != nil {
+		// log failure
+		return
+	}
+	defer conn.Close()
+
+	packetConn := s.createPacketConn(conn)
+	s.setupInterfaces(packetConn, interfaces)
+
+	responses := make(map[string][]byte)
+
+	buf := make([]byte, 1000)
+	for {
+		n, src, err := packetConn.ReadFrom(buf)
+		if err != nil {
+			// log error
+			return
+		}
+
+		srcHost, _, _ := net.SplitHostPort(src.String())
+		// Make a copy of the first n bytes of buf
+		bufCopy := buf[:n]
+		responses[srcHost] = bufCopy
+
+		//if maxServicesFound() {
+		//	break
+		//}
+	}
+}
+
+func (s *ServiceDiscoverer) getUDPProtocolVersion() string {
+	if s.UseIPV6 {
+		return "udp6"
+	}
+
+	return "udp4"
 }
 
 func (s *ServiceDiscoverer) RegisterAndListen() error {
