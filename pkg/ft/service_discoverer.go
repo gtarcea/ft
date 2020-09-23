@@ -12,28 +12,29 @@ import (
 // combination sending a user defined payload. It will then collect the responses and make them
 // available.
 type ServiceDiscoverer struct {
-	// Port the services we are trying to discover are listening on
+	// Port the services we are trying to discover are listening on. Defaults to 9999.
 	Port int
 
-	// The multicast addresses to send our broadcasts (multicasts) out on
+	// The multicast addresses to send our broadcasts (multicasts) out on. Defaults
+	// to 239.255.255.250 for ipv4 and ff02::c for ipv6.
 	MulticastAddress string
 
-	// How long to wait before sending out another broadcast
+	// How long to wait before sending out another broadcast. Defaults to 1 second.
 	BroadcastDelay time.Duration
 
-	// Maximum services to collect, -1 means there is no limit. Defaults to -1 if value is not set (ie, is zero)
+	// Maximum services to collect, -1 means there is no limit. Defaults to -1 (unlimited).
 	MaxServices int
 
-	// How long to spend searching for services.
+	// How long to spend searching for services. Defaults to 10 seconds.
 	TimeLimit time.Duration
 
-	// By default we use UDP on IPV4. If this flag is true then we use UDP on IPV6.
+	// By default we use UDP on IPV4. If this flag is true then we use UDP on IPV6. Defaults to false.
 	UseIPV6 bool
 
 	// Return services found on the local host. Defaults to false.
 	AllowLocal bool
 
-	//****** Internal state ******
+	// ****** Internal state ******
 
 	// This is the context sent in to the api calls that can be used to cancel the functions
 	// before TimeLimit or MaxServices is reached.
@@ -60,7 +61,7 @@ type Service struct {
 
 type broadcastFunc func(*net.UDPAddr)
 
-// FindServices will search for services on the network by broadcasting payload to the port and
+// FindServices will search for services on the network by listening for broadcasts to the port and
 // multicast address in the ServiceDiscoverer. When finished it will return the list of services
 // that responded. FindServices is a synchronous call, but it starts a go routine to listen for
 // responses to its payload broadcast. The context (ctx) passed in can be used to stop the broadcast
@@ -73,18 +74,12 @@ func (s *ServiceDiscoverer) FindServices(ctx context.Context, payload []byte) ([
 
 	defer s.packetConn.Close()
 
-	return s.runCollectorAndWait()
+	// FindServices doesn't broadcast so pass nil as the broadcast address
+	return s.runBroadcastAndCollect(nil)
 }
 
-func (s *ServiceDiscoverer) runCollectorAndWait() ([]Service, error) {
-	// Just listen for responses
-	broadcastFunc := func(udpAddr *net.UDPAddr) {
-	}
-
-	return s.runBroadcastAndCollect(broadcastFunc, nil)
-}
-
-// BroadcastService
+// BroadcastService will broadcast payload on the network but will not discover services. BroadcastService is
+// a synchronous call. At the moment it does start a background listener that it ignores.
 func (s *ServiceDiscoverer) BroadcastService(ctx context.Context, payload []byte) error {
 	if err := s.finishServiceDiscovererSetup(ctx, payload); err != nil {
 		return err
@@ -92,30 +87,22 @@ func (s *ServiceDiscoverer) BroadcastService(ctx context.Context, payload []byte
 
 	defer s.packetConn.Close()
 
-	_, err := s.broadcastAndCollect()
+	// Address to broadcast on
+	broadcastAddr := &net.UDPAddr{IP: net.ParseIP(s.MulticastAddress), Port: s.Port}
+
+	_, err := s.runBroadcastAndCollect(broadcastAddr)
+
 	return err
 }
 
+// finishServiceDiscovererSetup finishes the book keeping around setting up a ServiceDiscoverer including
+// setting the default values for unset flags, setting multicast and creating a connection.
 func (s *ServiceDiscoverer) finishServiceDiscovererSetup(ctx context.Context, payload []byte) error {
 	// Carry context and payload into broadcast
 	s.ctx = ctx
 	s.payload = payload
 
-	if s.MaxServices == 0 {
-		// MaxServices not set, default to unlimited (-1)
-		s.MaxServices = -1
-	}
-
-	if s.Port == 0 {
-		s.Port = 9999
-	}
-
-	if s.MulticastAddress == "" {
-		s.MulticastAddress = "239.255.255.250"
-		if s.UseIPV6 {
-			s.MulticastAddress = "ff02::c"
-		}
-	}
+	s.setDefaultValuesForServiceDiscoverer()
 
 	// Find all the host network interfaces
 	networkInterfaces, err := net.Interfaces()
@@ -140,21 +127,37 @@ func (s *ServiceDiscoverer) finishServiceDiscovererSetup(ctx context.Context, pa
 	return nil
 }
 
-// broadcastAndCollect creates the broadcaster and address to broadcast to then delegates to
-// s.runBroadcastAndCollect() to do the actual work.
-func (s *ServiceDiscoverer) broadcastAndCollect() ([]Service, error) {
-	// Address to broadcast on
-	udpAddr := &net.UDPAddr{IP: net.ParseIP(s.MulticastAddress), Port: s.Port}
-	broadcastFunc := func(udpAddr *net.UDPAddr) {
-		s.broadcast(udpAddr)
+// setDefaultValuesForServiceDiscoverer sets a default value in ServiceDiscoverer for any value that the user
+// did not set.
+func (s *ServiceDiscoverer) setDefaultValuesForServiceDiscoverer() {
+	if s.MaxServices == 0 {
+		// MaxServices not set, default to unlimited (-1)
+		s.MaxServices = -1
 	}
 
-	return s.runBroadcastAndCollect(broadcastFunc, udpAddr)
+	if s.Port == 0 {
+		s.Port = 9999
+	}
+
+	if s.MulticastAddress == "" {
+		s.MulticastAddress = "239.255.255.250"
+		if s.UseIPV6 {
+			s.MulticastAddress = "ff02::c"
+		}
+	}
+
+	if s.TimeLimit == 0 {
+		s.TimeLimit = 10 * time.Second
+	}
+
+	if s.BroadcastDelay == 0 {
+		s.BroadcastDelay = 1 * time.Second
+	}
 }
 
 // runBroadcastAndCollect will start up a background go routine to collect responses to its broadcasts. It will then
 // enter a loop sending out broadcasts of payload (ServiceDiscoverer payload) on the multicast address and port.
-func (s *ServiceDiscoverer) runBroadcastAndCollect(broadcastFunc broadcastFunc, udpAddr *net.UDPAddr) ([]Service, error) {
+func (s *ServiceDiscoverer) runBroadcastAndCollect(broadcastAddr *net.UDPAddr) ([]Service, error) {
 	// Create an context so we can tell the listener go routine to stop.
 	ctx, cancelCollection := context.WithCancel(context.Background())
 
@@ -172,7 +175,7 @@ func (s *ServiceDiscoverer) runBroadcastAndCollect(broadcastFunc broadcastFunc, 
 BroadcastLoop:
 	for {
 		// Send payload out on the multicast address/port
-		broadcastFunc(udpAddr)
+		s.broadcast(broadcastAddr)
 
 		// There are a number of conditions that determine if we should stop searching for
 		// services:
@@ -231,7 +234,12 @@ func (s *ServiceDiscoverer) startResponseCollectorInBackground(ctx context.Conte
 }
 
 // broadcast will write payload to the multicast address for all the host interfaces.
-func (s *ServiceDiscoverer) broadcast(dst net.Addr) {
+func (s *ServiceDiscoverer) broadcast(dst *net.UDPAddr) {
+	// If there is no destination then don't broadcast
+	if dst == nil {
+		return
+	}
+
 	for _, iface := range s.interfaces {
 		if err := s.packetConn.SetMulticastInterface(&iface); err != nil {
 			// log error
@@ -254,6 +262,8 @@ func discoveryTimeLimitReached(startingTime time.Time, durationLimit time.Durati
 	return time.Since(startingTime) > durationLimit
 }
 
+// getUDPProtocolVersion returns the correct protocol version string depending on whether we are
+// using IPv4 or IPv6.
 func (s *ServiceDiscoverer) getUDPProtocolVersion() string {
 	if s.UseIPV6 {
 		return "udp6"
