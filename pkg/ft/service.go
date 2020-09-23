@@ -39,6 +39,12 @@ type ServiceDiscoverer struct {
 
 	// The payload to broadcast
 	payload []byte
+
+	// The network interfaces to the host that we will broadcast to or listen on
+	interfaces []net.Interface
+
+	// Network packet connector interface - mediates between ipv6 and ipv4 network interfaces
+	packetConn NetPacketConn
 }
 
 // A Service represents an address that responded to the ServiceDiscoverer broadcast.
@@ -57,71 +63,95 @@ type Service struct {
 // loop and shutdown the background listener. These will automatically be cleaned up when FindServices
 // terminates normally.
 func (s *ServiceDiscoverer) FindServices(ctx context.Context, payload []byte) ([]Service, error) {
+	if err := s.finishServiceDiscovererSetup(ctx, payload); err != nil {
+		return nil, err
+	}
+
+	defer s.packetConn.Close()
+
+	return s.broadcastAndCollect()
+}
+
+func (s *ServiceDiscoverer) finishServiceDiscovererSetup(ctx context.Context, payload []byte) error {
+	// Carry context and payload into broadcast
 	s.ctx = ctx
 	s.payload = payload
-	addr := net.JoinHostPort(s.MulticastAddress, fmt.Sprintf("%d", s.Port))
 
-	conn, err := net.ListenPacket(s.getUDPProtocolVersion(), addr)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-
-	packetConn := s.createPacketConn(conn)
-
+	// Find all the host network interfaces
 	networkInterfaces, err := net.Interfaces()
 	if err != nil {
-		return nil, err
+		return err
+	}
+	s.interfaces = networkInterfaces
+
+	// Create the network connection
+	addr := net.JoinHostPort(s.MulticastAddress, fmt.Sprintf("%d", s.Port))
+	conn, err := net.ListenPacket(s.getUDPProtocolVersion(), addr)
+	if err != nil {
+		return err
 	}
 
-	s.setupInterfaces(packetConn, networkInterfaces)
+	// Transform connection so it is ipv4/ipv6 independent and use that
+	s.setPacketConn(conn)
 
-	return s.broadcastAndCollect(packetConn, networkInterfaces)
+	// Now that we are ipv4/ipv6 independent setup the network interfaces
+	s.setupInterfaces()
+
+	return nil
 }
 
 // createPacketConn creates an instance of net.PacketConn that have the same interface whether they are using
 // ipv4 or ipv6.
-func (s *ServiceDiscoverer) createPacketConn(conn net.PacketConn) NetPacketConn {
+func (s *ServiceDiscoverer) setPacketConn(conn net.PacketConn) {
 	if s.UseIPV6 {
-		return PacketConn6{PacketConn: ipv6.NewPacketConn(conn)}
+		s.packetConn = PacketConn6{PacketConn: ipv6.NewPacketConn(conn)}
+	} else {
+		s.packetConn = PacketConn4{PacketConn: ipv4.NewPacketConn(conn)}
 	}
-
-	return PacketConn4{PacketConn: ipv4.NewPacketConn(conn)}
 }
 
 // setupInterfaces sets the multicast address on each of the host interfaces.
-func (s *ServiceDiscoverer) setupInterfaces(packetConn NetPacketConn, networkInterfaces []net.Interface) {
+func (s *ServiceDiscoverer) setupInterfaces() {
 	group := net.ParseIP(s.MulticastAddress)
-	for _, ni := range networkInterfaces {
-		_ = packetConn.JoinGroup(&ni, &net.UDPAddr{IP: group, Port: s.Port})
+	for _, ni := range s.interfaces {
+		_ = s.packetConn.JoinGroup(&ni, &net.UDPAddr{IP: group, Port: s.Port})
 	}
 }
 
 // broadcastAndCollect will start up a background go routine to collect responses to its broadcasts. It will then
 // enter a loop sending out broadcasts of payload (ServiceDiscoverer payload) on the multicast address and port.
-func (s *ServiceDiscoverer) broadcastAndCollect(packetConn NetPacketConn, interfaces []net.Interface) ([]Service, error) {
+func (s *ServiceDiscoverer) broadcastAndCollect() ([]Service, error) {
 	// Create an context so we can tell the listener go routine to stop.
 	ctx, cancelCollection := context.WithCancel(context.Background())
-	serviceCollector, err := s.startResponseCollectorInBackground(ctx, interfaces)
+
+	// Start the collector in the background
+	serviceCollector, err := s.startResponseCollectorInBackground(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	// Address to broadcast on
 	udpAddr := &net.UDPAddr{IP: net.ParseIP(s.MulticastAddress), Port: s.Port}
+
+	// Need our starting time so we can exit after searching for services for s.TimeLimit
 	startingTime := time.Now()
 
-	// Loop sending out broadcasts. The serviceCollector will collec the responses to the broadcasts.
+	// Loop sending out broadcasts.
+	// The serviceCollector will collect the responses to the broadcasts.
 BroadcastLoop:
 	for {
-		// Send broadcast
-		broadcast(packetConn, s.payload, interfaces, udpAddr)
+		// Send payload out on the multicast address/port
+		s.broadcast(udpAddr)
 
-		// Stop if the user defined duration for finding services has been reached
-		if discoveryDurationReached(startingTime, s.TimeLimit) {
+		// There are a number of conditions that determine if we should stop searching for
+		// services:
+
+		// 1. Stop if the user defined duration for finding services has been reached
+		if discoveryTimelimitReached(startingTime, s.TimeLimit) {
 			break
 		}
 
-		// Stop if the listener go routine has collected the user defined maximum number of
+		// 2. Stop if the listener go routine has collected the user defined maximum number of
 		// service responses.
 		if serviceCollector.maxServicesFound {
 			break
@@ -129,23 +159,26 @@ BroadcastLoop:
 
 		select {
 		case <-s.ctx.Done():
-			// Did the call decide to stop us early?
+			// 3. Stop if the ctx is done (cancel function called on context)
 			break BroadcastLoop
 
 		case <-time.After(s.BroadcastDelay): // Wait for the delay time before sending out another broadcast
 		}
 	}
 
-	// Tell the service collector to shutdown
+	// At this point we've stopped broadcasting. So now we tell the service collector to shutdown
+	// and then wait for it to stop
 	cancelCollection()
-
-	// TODO: Add a semaphore to wait on for the listen thread to mark itself as done.
+	serviceCollector.wg.Wait()
 
 	return serviceCollector.toServicesList(), nil
 }
 
-func (s *ServiceDiscoverer) startResponseCollectorInBackground(ctx context.Context, interfaces []net.Interface) (*serviceCollector, error) {
-	// The service collector will collect all the responses to the broadcast.
+// startResponseCollectorInBackground starts a serviceCollector running in the background listening
+// for responses to the broadcast. The context is used to tell the background listener to exit.
+func (s *ServiceDiscoverer) startResponseCollectorInBackground(ctx context.Context) (*serviceCollector, error) {
+	// The service collector will collect all the responses to the broadcast. It shares much of the setup
+	// information with the ServiceDiscoverer so rather than duplicate that state we can just share it.
 	serviceCollector := &serviceCollector{
 		sd:        s,
 		responses: make(map[string][]byte),
@@ -153,32 +186,36 @@ func (s *ServiceDiscoverer) startResponseCollectorInBackground(ctx context.Conte
 
 	// Make sure that we can actually create the network connection that the listener go routine
 	// will listen on.
-	conn, err := serviceCollector.createConnection(interfaces)
+	conn, err := serviceCollector.createConnection(s.interfaces)
 	if err != nil {
 		return nil, err
 	}
 
-	// Start up a listener that will collect the responses from services that respond to the broadcast
+	// Start up a listener that will collect the responses from services that respond to the broadcast. Since
+	// broadcastAndCollect() needs to know when the listener has exited we use a wait group to synchronize on.
+	serviceCollector.wg.Add(1)
 	go serviceCollector.listenForAndCollectResponses(conn, ctx)
 
 	return serviceCollector, nil
 }
 
-func broadcast(packetConn NetPacketConn, payload []byte, ifaces []net.Interface, dst net.Addr) {
-	for i := range ifaces {
-		if err := packetConn.SetMulticastInterface(&ifaces[i]); err != nil {
+// broadcast will write payload to the multicast address for all the host interfaces.
+func (s *ServiceDiscoverer) broadcast(dst net.Addr) {
+	for _, iface := range s.interfaces {
+		if err := s.packetConn.SetMulticastInterface(&iface); err != nil {
 			// log error
 			continue
 		}
 
-		_ = packetConn.SetMulticastTTL(2)
-		if _, err := packetConn.WriteTo(payload, dst); err != nil {
+		_ = s.packetConn.SetMulticastTTL(2)
+		if _, err := s.packetConn.WriteTo(s.payload, dst); err != nil {
 			// log error
 		}
 	}
 }
 
-func discoveryDurationReached(startingTime time.Time, durationLimit time.Duration) bool {
+// discoveryTimelimitReached returns true if the time limit for service discovery has been reached.
+func discoveryTimelimitReached(startingTime time.Time, durationLimit time.Duration) bool {
 	if durationLimit < 0 {
 		return false
 	}

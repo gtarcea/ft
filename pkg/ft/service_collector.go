@@ -4,20 +4,27 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
+
+	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 type serviceCollector struct {
 	sd               *ServiceDiscoverer
 	responses        map[string][]byte
 	maxServicesFound bool
+	wg               sync.WaitGroup
 }
 
 func (s *serviceCollector) listenForAndCollectResponses(conn NetPacketConn, ctx context.Context) {
 	defer conn.Close()
+	defer s.wg.Done()
 
 	buf := make([]byte, 1000)
 
-CollectionLoop: // Loop collecting responses to broadcasts/multicasts
+	// Loop collecting responses to broadcasts/multicasts
+CollectionLoop:
 	for {
 		n, src, err := conn.ReadFrom(buf)
 		if err != nil {
@@ -26,6 +33,7 @@ CollectionLoop: // Loop collecting responses to broadcasts/multicasts
 		}
 
 		srcHost, _, _ := net.SplitHostPort(src.String())
+
 		// Make a copy of the first n bytes of buf
 		bufCopy := buf[:n]
 		s.responses[srcHost] = bufCopy
@@ -77,8 +85,23 @@ func (s *serviceCollector) createConnection(interfaces []net.Interface) (NetPack
 		return nil, err
 	}
 
-	packetConn := s.sd.createPacketConn(conn)
-	s.sd.setupInterfaces(packetConn, interfaces)
+	packetConn := createPacketConn(conn, s.sd.UseIPV6)
+	setupInterfaces(packetConn, s.sd.interfaces, s.sd.MulticastAddress, s.sd.Port)
 
 	return packetConn, nil
+}
+
+func createPacketConn(conn net.PacketConn, useIPV6 bool) NetPacketConn {
+	if useIPV6 {
+		return PacketConn6{PacketConn: ipv6.NewPacketConn(conn)}
+	} else {
+		return PacketConn4{PacketConn: ipv4.NewPacketConn(conn)}
+	}
+}
+
+func setupInterfaces(packetConn NetPacketConn, interfaces []net.Interface, multicastAddress string, port int) {
+	group := net.ParseIP(multicastAddress)
+	for _, ni := range interfaces {
+		_ = packetConn.JoinGroup(&ni, &net.UDPAddr{IP: group, Port: port})
+	}
 }
