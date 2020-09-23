@@ -70,7 +70,7 @@ CollectionLoop:
 		}
 
 		if localAddressTracker.isLocalAddress(srcHost) && !s.sd.AllowLocal {
-			// Address belongs to local host and we aren't returning any local services
+			// Address belongs to host we are running on and we aren't collecting any local services
 			continue
 		}
 

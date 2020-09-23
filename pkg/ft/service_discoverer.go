@@ -159,7 +159,9 @@ func (s *ServiceDiscoverer) runBroadcastAndCollect(broadcastAddr *net.UDPAddr) (
 	// Create an context so we can tell the listener go routine to stop.
 	ctx, cancelCollection := context.WithCancel(context.Background())
 
-	// Start the collector in the background
+	// Start the collector in the background. For now we always do this, even though the BroadcastService function
+	// doesn't do anything with the collected services. This could be refactored out, but at the moment the way
+	// the code is structured makes it easier to keep in.
 	serviceCollector, err := s.startResponseCollectorInBackground(ctx)
 	if err != nil {
 		return nil, err
