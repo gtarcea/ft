@@ -59,8 +59,6 @@ type Service struct {
 	PayloadResponse []byte
 }
 
-type broadcastFunc func(*net.UDPAddr)
-
 // FindServices will search for services on the network by listening for broadcasts to the port and
 // multicast address in the ServiceDiscoverer. When finished it will return the list of services
 // that responded. FindServices is a synchronous call, but it starts a go routine to listen for
