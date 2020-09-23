@@ -46,6 +46,11 @@ func (s *serviceCollector) listenForAndCollectResponses(conn NetPacketConn, ctx 
 	// Loop collecting responses to broadcasts/multicasts
 CollectionLoop:
 	for {
+		// Check if we are done. This is the first check in the loop because other checks in the loop
+		// have continue in them. If this check were at the bottom then it would be bypassed by the
+		// continue restarting the loop at the top. Potentially that would mean we never check to see
+		// if the context was cancelled and we should exit early.
+
 		select {
 		case <-ctx.Done():
 			break CollectionLoop
@@ -71,6 +76,7 @@ CollectionLoop:
 
 		bufCopy := buf[:n] // Make a copy of the first n bytes of buf
 
+		// Add responding host to responses
 		s.responses[srcHost] = bufCopy
 
 		if maxServicesFound(s.responses, s.sd.MaxServices) {
@@ -94,8 +100,8 @@ func (s *serviceCollector) toServicesList() []Service {
 	var servicesFound []Service
 
 	// The ServiceCollector contains a response field which is a map where the key is the host address responding,
-	// and the value is a byte array. So we iterate through the map and get the key (address) and value (payload response)
-	// and copy them into the list of services that responded.
+	// and the value is a byte array (the response sent). So we iterate through the map and get the key (address)
+	// and value (payload response) and copy them into the list of services that responded.
 	for address, payloadResponse := range s.responses {
 		service := Service{
 			Address:         address,
@@ -107,6 +113,8 @@ func (s *serviceCollector) toServicesList() []Service {
 	return servicesFound
 }
 
+// createConnection creates the new connection, maps it into a NetPacketConn and sets up the interfaces
+// to listen on.
 func (s *serviceCollector) createConnection() (NetPacketConn, error) {
 	addr := net.JoinHostPort(s.sd.MulticastAddress, fmt.Sprintf("%d", s.sd.Port))
 
@@ -116,13 +124,17 @@ func (s *serviceCollector) createConnection() (NetPacketConn, error) {
 		return nil, err
 	}
 
-	packetConn := createPacketConn(conn, s.sd.UseIPV6)
+	packetConn := createNetPacketConn(conn, s.sd.UseIPV6)
 	setupInterfaces(packetConn, s.sd.interfaces, s.sd.MulticastAddress, s.sd.Port)
 
 	return packetConn, nil
 }
 
-func createPacketConn(conn net.PacketConn, useIPV6 bool) NetPacketConn {
+// createNetPacketConn takes a net.PacketConn and maps it into a structure that conforms to
+// NetPacketConn interface. This allows us to use a single interface to handle both ipv6 and
+// ipv4 connections. The implementations for these connections have slightly different calls,
+// which these structures map over to create a unified interface.
+func createNetPacketConn(conn net.PacketConn, useIPV6 bool) NetPacketConn {
 	if useIPV6 {
 		return PacketConn6{PacketConn: ipv6.NewPacketConn(conn)}
 	} else {
@@ -130,6 +142,7 @@ func createPacketConn(conn net.PacketConn, useIPV6 bool) NetPacketConn {
 	}
 }
 
+// setupInterfaces iterates through the list of interfaces and sets the UDP address (group) to use for that interface
 func setupInterfaces(packetConn NetPacketConn, interfaces []net.Interface, multicastAddress string, port int) {
 	group := net.ParseIP(multicastAddress)
 	for _, ni := range interfaces {
@@ -137,10 +150,17 @@ func setupInterfaces(packetConn NetPacketConn, interfaces []net.Interface, multi
 	}
 }
 
+// localAddressTracker contains a map of all addresses that are local to the system. This is used to
+// identify responses that came from the local host and to filter them out if ServiceDiscoverer.LocalAllowed
+// is set to false.
 type localAddressTracker struct {
 	localAddressMap map[string]bool
 }
 
+// newLocalAddressTracker creates a new localAddressTracker and loads it with all the local
+// host addresses. These include common ones such as 'localhost', '127.0.0.1', and (for ipv6)
+// '::1'. It also goes through the list of interfaces, finds their local addresses and adds
+// them to the map.
 func newLocalAddressTracker(interfaces []net.Interface) *localAddressTracker {
 	var localAddressMap = make(map[string]bool)
 
@@ -171,6 +191,8 @@ func newLocalAddressTracker(interfaces []net.Interface) *localAddressTracker {
 	return &localAddressTracker{localAddressMap: localAddressMap}
 }
 
+// isLocalAddress is a convenience function for checking if a give address is
+// in the local address map.
 func (t *localAddressTracker) isLocalAddress(addr string) bool {
 	_, ok := t.localAddressMap[addr]
 	return ok
