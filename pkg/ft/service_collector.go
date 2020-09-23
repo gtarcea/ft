@@ -11,21 +11,48 @@ import (
 )
 
 type serviceCollector struct {
-	sd               *ServiceDiscoverer
-	responses        map[string][]byte
+	// Local copy of the ServiceDiscoverer we reuse for some shared settings and state
+	sd *ServiceDiscoverer
+
+	// A map of responses where the key is the response IP and the value is the response
+	responses map[string][]byte
+
+	// If there is a limit on the number of services that can be found, then if this limit is reached
+	// maxServicesFound will be set to true. This allows the broadcast loop in broadcastAndCollect()
+	// in the ServiceDiscoverer to check if it should stop broadcasts because the max number of services
+	// have been collected.
 	maxServicesFound bool
-	wg               sync.WaitGroup
+
+	// Used by the serviceCollector to signal that it has finished and it is now safe to access
+	// the responses map.
+	wg sync.WaitGroup
 }
 
+// listForAndCollectResponses listens for responses on the local interfaces. It checks if the response
+// is from a valid host and if it is tracks that response. This method will set s.wg.Done() when it is
+// finished to signal that it is safe to read the map of reponses.
 func (s *serviceCollector) listenForAndCollectResponses(conn NetPacketConn, ctx context.Context) {
 	defer conn.Close()
 	defer s.wg.Done()
 
+	// Load up the list of local addresses for the host. This is used to track whether a response
+	// came from the local host and works in conjunction with the ServiceDiscoverer AllowLocal flag
+	// to determine if we should collect that response.
+	localAddressTracker := newLocalAddressTracker(s.sd.interfaces)
+
+	// Buffer that will contain the response from the multicast connection.
 	buf := make([]byte, 1000)
 
 	// Loop collecting responses to broadcasts/multicasts
 CollectionLoop:
 	for {
+		select {
+		case <-ctx.Done():
+			break CollectionLoop
+		default:
+		}
+
+		// TODO: Add read timeout and check if error is read timeout
 		n, src, err := conn.ReadFrom(buf)
 		if err != nil {
 			// log error
@@ -37,6 +64,11 @@ CollectionLoop:
 			continue
 		}
 
+		if localAddressTracker.isLocalAddress(srcHost) && !s.sd.AllowLocal {
+			// Address belongs to local host and we aren't returning any local services
+			continue
+		}
+
 		bufCopy := buf[:n] // Make a copy of the first n bytes of buf
 
 		s.responses[srcHost] = bufCopy
@@ -45,10 +77,6 @@ CollectionLoop:
 			break
 		}
 
-		select {
-		case <-ctx.Done():
-			break CollectionLoop
-		}
 	}
 }
 
@@ -107,4 +135,43 @@ func setupInterfaces(packetConn NetPacketConn, interfaces []net.Interface, multi
 	for _, ni := range interfaces {
 		_ = packetConn.JoinGroup(&ni, &net.UDPAddr{IP: group, Port: port})
 	}
+}
+
+type localAddressTracker struct {
+	localAddressMap map[string]bool
+}
+
+func newLocalAddressTracker(interfaces []net.Interface) *localAddressTracker {
+	var localAddressMap = make(map[string]bool)
+
+	// Setup local address IPs for IPv4 and IPv6 as well as localhost name
+	localAddressMap["localhost"] = true
+	localAddressMap["127.0.0.1"] = true
+	localAddressMap["::1"] = true
+
+	// loop through all the local network interfaces extracting addresses and adding
+	// them into the localAddressMap
+	for _, networkInterface := range interfaces {
+		// Get addresses for our local host interface
+		addrs, err := networkInterface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		// Add the addresses for the interface
+		for _, addr := range addrs {
+			ipAddress, _, err := net.ParseCIDR(addr.String())
+			if err != nil {
+				continue
+			}
+			localAddressMap[ipAddress.String()] = true
+		}
+	}
+
+	return &localAddressTracker{localAddressMap: localAddressMap}
+}
+
+func (t *localAddressTracker) isLocalAddress(addr string) bool {
+	_, ok := t.localAddressMap[addr]
+	return ok
 }

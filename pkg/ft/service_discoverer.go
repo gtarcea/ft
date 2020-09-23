@@ -30,6 +30,9 @@ type ServiceDiscoverer struct {
 	// By default we use UDP on IPV4. If this flag is true then we use UDP on IPV6.
 	UseIPV6 bool
 
+	// Return services found on the local host. Defaults to false.
+	AllowLocal bool
+
 	//****** Internal state ******
 
 	// This is the context sent in to the api calls that can be used to cancel the functions
