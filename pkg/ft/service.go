@@ -8,7 +8,7 @@ import (
 )
 
 // A ServiceDiscoverer is used to discover services on a network. The services are on some set of
-// multicast addresses and a particular. The ServiceDiscoverer will broadcast on that address/port
+// multicast addresses and a particular port. The ServiceDiscoverer will broadcast on that address/port
 // combination sending a user defined payload. It will then collect the responses and make them
 // available.
 type ServiceDiscoverer struct {
@@ -21,7 +21,7 @@ type ServiceDiscoverer struct {
 	// How long to wait before sending out another broadcast
 	BroadcastDelay time.Duration
 
-	// Maximum services that listen for, -1 means there is no limit.
+	// Maximum services to collect, -1 means there is no limit.
 	MaxServices int
 
 	// How long to spend searching for services.
@@ -30,7 +30,9 @@ type ServiceDiscoverer struct {
 	// By default we use UDP on IPV4. If this flag is true then we use UDP on IPV6.
 	UseIPV6 bool
 
-	// This is the context sent in to the api calls then can be used to cancel the functions
+	//****** Internal state ******
+
+	// This is the context sent in to the api calls that can be used to cancel the functions
 	// before TimeLimit or MaxServices is reached.
 	ctx context.Context
 
@@ -58,7 +60,7 @@ type Service struct {
 // that responded. FindServices is a synchronous call, but it starts a go routine to listen for
 // responses to its payload broadcast. The context (ctx) passed in can be used to stop the broadcast
 // loop and shutdown the background listener. These will automatically be cleaned up when FindServices
-// terminates normally.
+// terminates.
 func (s *ServiceDiscoverer) FindServices(ctx context.Context, payload []byte) ([]Service, error) {
 	if err := s.finishServiceDiscovererSetup(ctx, payload); err != nil {
 		return nil, err
