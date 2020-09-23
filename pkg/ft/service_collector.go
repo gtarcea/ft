@@ -76,7 +76,7 @@ func (s *serviceCollector) toServicesList() []Service {
 	return servicesFound
 }
 
-func (s *serviceCollector) createConnection(interfaces []net.Interface) (NetPacketConn, error) {
+func (s *serviceCollector) createConnection() (NetPacketConn, error) {
 	addr := net.JoinHostPort(s.sd.MulticastAddress, fmt.Sprintf("%d", s.sd.Port))
 
 	conn, err := net.ListenPacket(s.sd.getUDPProtocolVersion(), addr)

@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"net"
 	"time"
-
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 )
 
 // A ServiceDiscoverer is used to discover services on a network. The services are on some set of
@@ -92,30 +89,12 @@ func (s *ServiceDiscoverer) finishServiceDiscovererSetup(ctx context.Context, pa
 	}
 
 	// Transform connection so it is ipv4/ipv6 independent and use that
-	s.setPacketConn(conn)
+	s.packetConn = createPacketConn(conn, s.UseIPV6)
 
 	// Now that we are ipv4/ipv6 independent setup the network interfaces
-	s.setupInterfaces()
+	setupInterfaces(s.packetConn, s.interfaces, s.MulticastAddress, s.Port)
 
 	return nil
-}
-
-// createPacketConn creates an instance of net.PacketConn that have the same interface whether they are using
-// ipv4 or ipv6.
-func (s *ServiceDiscoverer) setPacketConn(conn net.PacketConn) {
-	if s.UseIPV6 {
-		s.packetConn = PacketConn6{PacketConn: ipv6.NewPacketConn(conn)}
-	} else {
-		s.packetConn = PacketConn4{PacketConn: ipv4.NewPacketConn(conn)}
-	}
-}
-
-// setupInterfaces sets the multicast address on each of the host interfaces.
-func (s *ServiceDiscoverer) setupInterfaces() {
-	group := net.ParseIP(s.MulticastAddress)
-	for _, ni := range s.interfaces {
-		_ = s.packetConn.JoinGroup(&ni, &net.UDPAddr{IP: group, Port: s.Port})
-	}
 }
 
 // broadcastAndCollect will start up a background go routine to collect responses to its broadcasts. It will then
@@ -186,7 +165,7 @@ func (s *ServiceDiscoverer) startResponseCollectorInBackground(ctx context.Conte
 
 	// Make sure that we can actually create the network connection that the listener go routine
 	// will listen on.
-	conn, err := serviceCollector.createConnection(s.interfaces)
+	conn, err := serviceCollector.createConnection()
 	if err != nil {
 		return nil, err
 	}
