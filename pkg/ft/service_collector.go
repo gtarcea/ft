@@ -32,10 +32,13 @@ CollectionLoop:
 			break
 		}
 
-		srcHost, _, _ := net.SplitHostPort(src.String())
+		srcHost, _, err := net.SplitHostPort(src.String())
+		if err != nil {
+			continue
+		}
 
-		// Make a copy of the first n bytes of buf
-		bufCopy := buf[:n]
+		bufCopy := buf[:n] // Make a copy of the first n bytes of buf
+
 		s.responses[srcHost] = bufCopy
 
 		if maxServicesFound(s.responses, s.sd.MaxServices) {
