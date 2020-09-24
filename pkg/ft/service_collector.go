@@ -7,6 +7,7 @@ import (
 	"sync"
 )
 
+// A serviceCollector collects the broadcast services on the address/port being listened on.
 type serviceCollector struct {
 	// Local copy of the ServiceDiscoverer we reuse for some shared settings and state
 	sd *ServiceDiscoverer
@@ -14,14 +15,14 @@ type serviceCollector struct {
 	// A map of responses where the key is the response IP and the value is the response
 	responses map[string][]byte
 
-	// If there is a limit on the number of services that can be found, then if this limit is reached
-	// maxServicesFound will be set to true. This allows the broadcast loop in broadcastAndCollect()
-	// in the ServiceDiscoverer to check if it should stop broadcasts because the max number of services
-	// have been collected.
-	maxServicesFound bool
+	// collectorFinished is used to signal that the collector exited. Currently it can exit
+	// early because ctx.Done() returned, because it collected the maximum number of services
+	// or because the call OnServiceFoundFunc returned true.
+	collectorFinished bool
 
-	// Used by the serviceCollector to signal that it has finished and it is now safe to access
-	// the responses map.
+	// Used by the serviceCollector to let other go routines wait for the collector to finish.
+	// This allows other routes to call wg.Wait() and when that returns they know the collector
+	// has exited and that its safe to access the responses field.
 	wg sync.WaitGroup
 }
 
@@ -77,14 +78,23 @@ CollectionLoop:
 		// Add responding host to responses
 		s.responses[srcHost] = bufCopy
 
+		if s.sd.OnServiceFoundFunc(&Service{Address: srcHost, PayloadResponse: bufCopy}) {
+			s.collectorFinished = true
+			break
+		}
+
 		if maxServicesFound(s.responses, s.sd.MaxServices) {
+			s.collectorFinished = true
 			break
 		}
 	}
 }
 
+// maxServicesFound returns true if the user specified maximum number of services was found. It handle the
+// case where the user specified unlimited service collection.
 func maxServicesFound(servicesFound map[string][]byte, maxServices int) bool {
 	if maxServices < 0 {
+		// Unlimited service collection
 		return false
 	}
 

@@ -34,6 +34,12 @@ type ServiceDiscoverer struct {
 	// Return services found on the local host. Defaults to false.
 	AllowLocal bool
 
+	// The OnServiceFoundFunc will be called when a service entry is found. The function returns a
+	// boolean value. If true is returned then collection will stop (presumably the desired service
+	// was found. If false is returned then collection will continue. Defaults to a func that always
+	// returns false.
+	OnServiceFoundFunc OnServiceFoundFunc
+
 	// ****** Internal state ******
 
 	// This is the context sent in to the api calls that can be used to cancel the functions
@@ -48,6 +54,14 @@ type ServiceDiscoverer struct {
 
 	// Network packet connector interface - mediates between ipv6 and ipv4 network interfaces
 	packetConn NetPacketConn
+}
+
+// OnServiceFoundFunc reprsents the function to call when a new service is discovered. The function
+// should return true if collection should stop, and false otherwise.
+type OnServiceFoundFunc func(service *Service) bool
+
+var DefaultOnServiceFoundFunc OnServiceFoundFunc = func(service *Service) bool {
+	return false
 }
 
 // A Service represents an address that responded to the ServiceDiscoverer broadcast.
@@ -94,6 +108,8 @@ func (s *ServiceDiscoverer) BroadcastService(ctx context.Context, payload []byte
 	return nil
 }
 
+// BroadcastAndFindServices acts as both a service broadcaster and a service finder. See BroadcastService and
+// FindServices for details.
 func (s *ServiceDiscoverer) BroadcastAndFindServices(ctx context.Context, payload []byte) ([]Service, error) {
 	if err := s.finishServiceDiscovererSetup(ctx, payload); err != nil {
 		return nil, err
@@ -165,5 +181,9 @@ func (s *ServiceDiscoverer) setDefaultValuesForServiceDiscoverer() {
 
 	if s.BroadcastDelay == 0 {
 		s.BroadcastDelay = 1 * time.Second
+	}
+
+	if s.OnServiceFoundFunc == nil {
+		s.OnServiceFoundFunc = DefaultOnServiceFoundFunc
 	}
 }

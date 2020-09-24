@@ -6,10 +6,14 @@ import (
 	"time"
 )
 
+// A serviceDiscovererLoop is an abstraction on the core loop performed for broadcasting and
+// collecting services. Because broadcast, collect, and finally broadcast and collect have very
+// similar logic, they were abstracted into a separate object.
 type serviceDiscovererLoop struct {
 	sd *ServiceDiscoverer
 }
 
+// broadcastLoop loops for the desired number of times broadcasting its service payload. It runs synchronously.
 func (s *serviceDiscovererLoop) broadcastLoop(broadcastAddr *net.UDPAddr) {
 	// Need our starting time so we can exit after searching for services for s.TimeLimit
 	startingTime := time.Now()
@@ -38,12 +42,15 @@ BroadcastLoop:
 	}
 }
 
+// collectLoop only runs the collector and doesn't perform broadcasts. This method reuses broadcastAndCollectLoop
+// but passes a nil in for the broadcastAddr, which tells broadcastAndCollectLoop not to perform broadcasts.
 func (s *serviceDiscovererLoop) collectLoop() ([]Service, error) {
 	return s.broadcastAnCollectLoop(nil)
 }
 
 // broadcastAndCollectLoop will start up a background go routine to collect responses to its broadcasts. It will then
-// enter a loop sending out broadcasts of payload (ServiceDiscoverer payload) on the multicast address and port.
+// enter a loop sending out broadcasts of payload (ServiceDiscoverer payload) on the multicast address and port. This
+// method runs synchronously and takes care of stopping the background collection process.
 func (s *serviceDiscovererLoop) broadcastAnCollectLoop(broadcastAddr *net.UDPAddr) ([]Service, error) {
 	// Create an context so we can tell the listener go routine to stop.
 	ctx, cancelCollection := context.WithCancel(context.Background())
@@ -77,9 +84,8 @@ BroadcastAndCollectLoop:
 			break
 		}
 
-		// 2. Stop if the listener go routine has collected the user defined maximum number of
-		// service responses.
-		if serviceCollector.maxServicesFound {
+		// 2. Stop if the listener go routine has signaled it finished collection
+		if serviceCollector.collectorFinished {
 			break
 		}
 
@@ -140,6 +146,13 @@ func (s *serviceDiscovererLoop) broadcast(dst *net.UDPAddr) {
 	}
 }
 
+// broadcastTimeLimitReached simply calls discoveryTimeLimitReached. Even though its the exact
+// same logic because what the check is meant for is different a separate function was created
+// to impart the real meaning of the check.
+func broadcastTimeLimitReached(startTime time.Time, durationLimit time.Duration) bool {
+	return discoveryTimeLimitReached(startTime, durationLimit)
+}
+
 // discoveryTimeLimitReached returns true if the time limit for service discovery has been reached.
 func discoveryTimeLimitReached(startingTime time.Time, durationLimit time.Duration) bool {
 	if durationLimit < 0 {
@@ -147,8 +160,4 @@ func discoveryTimeLimitReached(startingTime time.Time, durationLimit time.Durati
 	}
 
 	return time.Since(startingTime) > durationLimit
-}
-
-func broadcastTimeLimitReached(startTime time.Time, durationLimit time.Duration) bool {
-	return discoveryTimeLimitReached(startTime, durationLimit)
 }
