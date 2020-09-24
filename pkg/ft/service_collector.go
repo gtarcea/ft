@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 )
 
 type serviceCollector struct {
@@ -33,7 +30,8 @@ type serviceCollector struct {
 // finished to signal that it is safe to read the map of reponses.
 func (s *serviceCollector) listenForAndCollectResponses(conn NetPacketConn, ctx context.Context) {
 	defer conn.Close()
-	defer s.wg.Done()
+
+	defer s.wg.Done() // Signal we are done collecting
 
 	// Load up the list of local addresses for the host. This is used to track whether a response
 	// came from the local host and works in conjunction with the ServiceDiscoverer AllowLocal flag
@@ -82,7 +80,6 @@ CollectionLoop:
 		if maxServicesFound(s.responses, s.sd.MaxServices) {
 			break
 		}
-
 	}
 }
 
@@ -118,7 +115,7 @@ func (s *serviceCollector) toServicesList() []Service {
 func (s *serviceCollector) createConnection() (NetPacketConn, error) {
 	addr := net.JoinHostPort(s.sd.MulticastAddress, fmt.Sprintf("%d", s.sd.Port))
 
-	conn, err := net.ListenPacket(s.sd.getUDPProtocolVersion(), addr)
+	conn, err := net.ListenPacket(getUDPProtocolVersion(s.sd.UseIPV6), addr)
 	if err != nil {
 		// log failure
 		return nil, err
@@ -128,26 +125,6 @@ func (s *serviceCollector) createConnection() (NetPacketConn, error) {
 	setupInterfaces(packetConn, s.sd.interfaces, s.sd.MulticastAddress, s.sd.Port)
 
 	return packetConn, nil
-}
-
-// createNetPacketConn takes a net.PacketConn and maps it into a structure that conforms to
-// NetPacketConn interface. This allows us to use a single interface to handle both ipv6 and
-// ipv4 connections. The implementations for these connections have slightly different calls,
-// which these structures map over to create a unified interface.
-func createNetPacketConn(conn net.PacketConn, useIPV6 bool) NetPacketConn {
-	if useIPV6 {
-		return PacketConn6{PacketConn: ipv6.NewPacketConn(conn)}
-	} else {
-		return PacketConn4{PacketConn: ipv4.NewPacketConn(conn)}
-	}
-}
-
-// setupInterfaces iterates through the list of interfaces and sets the UDP address (group) to use for that interface
-func setupInterfaces(packetConn NetPacketConn, interfaces []net.Interface, multicastAddress string, port int) {
-	group := net.ParseIP(multicastAddress)
-	for _, ni := range interfaces {
-		_ = packetConn.JoinGroup(&ni, &net.UDPAddr{IP: group, Port: port})
-	}
 }
 
 // localAddressTracker contains a map of all addresses that are local to the system. This is used to

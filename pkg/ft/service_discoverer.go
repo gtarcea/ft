@@ -72,8 +72,8 @@ func (s *ServiceDiscoverer) FindServices(ctx context.Context, payload []byte) ([
 
 	defer s.packetConn.Close()
 
-	// FindServices doesn't broadcast so pass nil as the broadcast address
-	return s.runBroadcastAndCollect(nil)
+	sdLoop := &serviceDiscovererLoop{sd: s}
+	return sdLoop.collectLoop()
 }
 
 // BroadcastService will broadcast payload on the network but will not discover services. BroadcastService is
@@ -88,9 +88,24 @@ func (s *ServiceDiscoverer) BroadcastService(ctx context.Context, payload []byte
 	// Address to broadcast on
 	broadcastAddr := &net.UDPAddr{IP: net.ParseIP(s.MulticastAddress), Port: s.Port}
 
-	_, err := s.runBroadcastAndCollect(broadcastAddr)
+	sdLoop := &serviceDiscovererLoop{sd: s}
+	sdLoop.broadcastLoop(broadcastAddr)
 
-	return err
+	return nil
+}
+
+func (s *ServiceDiscoverer) BroadcastAndFindServices(ctx context.Context, payload []byte) ([]Service, error) {
+	if err := s.finishServiceDiscovererSetup(ctx, payload); err != nil {
+		return nil, err
+	}
+
+	defer s.packetConn.Close()
+
+	// Address to broadcast on
+	broadcastAddr := &net.UDPAddr{IP: net.ParseIP(s.MulticastAddress), Port: s.Port}
+
+	sdLoop := &serviceDiscovererLoop{sd: s}
+	return sdLoop.broadcastAnCollectLoop(broadcastAddr)
 }
 
 // finishServiceDiscovererSetup finishes the book keeping around setting up a ServiceDiscoverer including
@@ -111,7 +126,7 @@ func (s *ServiceDiscoverer) finishServiceDiscovererSetup(ctx context.Context, pa
 
 	// Create the network connection
 	addr := net.JoinHostPort(s.MulticastAddress, fmt.Sprintf("%d", s.Port))
-	conn, err := net.ListenPacket(s.getUDPProtocolVersion(), addr)
+	conn, err := net.ListenPacket(getUDPProtocolVersion(s.UseIPV6), addr)
 	if err != nil {
 		return err
 	}
@@ -151,123 +166,4 @@ func (s *ServiceDiscoverer) setDefaultValuesForServiceDiscoverer() {
 	if s.BroadcastDelay == 0 {
 		s.BroadcastDelay = 1 * time.Second
 	}
-}
-
-// runBroadcastAndCollect will start up a background go routine to collect responses to its broadcasts. It will then
-// enter a loop sending out broadcasts of payload (ServiceDiscoverer payload) on the multicast address and port.
-func (s *ServiceDiscoverer) runBroadcastAndCollect(broadcastAddr *net.UDPAddr) ([]Service, error) {
-	// Create an context so we can tell the listener go routine to stop.
-	ctx, cancelCollection := context.WithCancel(context.Background())
-
-	// Start the collector in the background. For now we always do this, even though the BroadcastService function
-	// doesn't do anything with the collected services. This could be refactored out, but at the moment the way
-	// the code is structured makes it easier to keep in.
-	serviceCollector, err := s.startResponseCollectorInBackground(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Need our starting time so we can exit after searching for services for s.TimeLimit
-	startingTime := time.Now()
-
-	// Loop sending out broadcasts.
-	// The serviceCollector will collect the responses to the broadcasts.
-BroadcastLoop:
-	for {
-		// Send payload out on the multicast address/port
-		s.broadcast(broadcastAddr)
-
-		// There are a number of conditions that determine if we should stop searching for
-		// services:
-
-		// 1. Stop if the user defined duration for finding services has been reached
-		if discoveryTimeLimitReached(startingTime, s.TimeLimit) {
-			break
-		}
-
-		// 2. Stop if the listener go routine has collected the user defined maximum number of
-		// service responses.
-		if serviceCollector.maxServicesFound {
-			break
-		}
-
-		select {
-		case <-s.ctx.Done():
-			// 3. Stop if the ctx is done (cancel function called on context)
-			break BroadcastLoop
-
-		case <-time.After(s.BroadcastDelay): // Wait for the delay time before sending out another broadcast
-		}
-	}
-
-	// At this point we've stopped broadcasting. So now we tell the service collector to shutdown
-	// and then wait for it to stop
-	cancelCollection()
-	serviceCollector.wg.Wait()
-
-	return serviceCollector.toServicesList(), nil
-}
-
-// startResponseCollectorInBackground starts a serviceCollector running in the background listening
-// for responses to the broadcast. The context is used to tell the background listener to exit.
-func (s *ServiceDiscoverer) startResponseCollectorInBackground(ctx context.Context) (*serviceCollector, error) {
-	// The service collector will collect all the responses to the broadcast. It shares much of the setup
-	// information with the ServiceDiscoverer so rather than duplicate that state we can just share it.
-	serviceCollector := &serviceCollector{
-		sd:        s,
-		responses: make(map[string][]byte),
-	}
-
-	// Make sure that we can actually create the network connection that the listener go routine
-	// will listen on.
-	conn, err := serviceCollector.createConnection()
-	if err != nil {
-		return nil, err
-	}
-
-	// Start up a listener that will collect the responses from services that respond to the broadcast. Since
-	// broadcastAndCollect() needs to know when the listener has exited we use a wait group to synchronize on.
-	serviceCollector.wg.Add(1)
-	go serviceCollector.listenForAndCollectResponses(conn, ctx)
-
-	return serviceCollector, nil
-}
-
-// broadcast will write payload to the multicast address for all the host interfaces.
-func (s *ServiceDiscoverer) broadcast(dst *net.UDPAddr) {
-	// If there is no destination then don't broadcast
-	if dst == nil {
-		return
-	}
-
-	for _, iface := range s.interfaces {
-		if err := s.packetConn.SetMulticastInterface(&iface); err != nil {
-			// log error
-			continue
-		}
-
-		_ = s.packetConn.SetMulticastTTL(2)
-		if _, err := s.packetConn.WriteTo(s.payload, dst); err != nil {
-			// log error
-		}
-	}
-}
-
-// discoveryTimeLimitReached returns true if the time limit for service discovery has been reached.
-func discoveryTimeLimitReached(startingTime time.Time, durationLimit time.Duration) bool {
-	if durationLimit < 0 {
-		return false
-	}
-
-	return time.Since(startingTime) > durationLimit
-}
-
-// getUDPProtocolVersion returns the correct protocol version string depending on whether we are
-// using IPv4 or IPv6.
-func (s *ServiceDiscoverer) getUDPProtocolVersion() string {
-	if s.UseIPV6 {
-		return "udp6"
-	}
-
-	return "udp4"
 }
