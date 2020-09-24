@@ -42,13 +42,13 @@ func (s *serviceDiscovererLoop) collectLoop() ([]Service, error) {
 	return s.broadcastAnCollectLoop(nil)
 }
 
+// broadcastAndCollectLoop will start up a background go routine to collect responses to its broadcasts. It will then
+// enter a loop sending out broadcasts of payload (ServiceDiscoverer payload) on the multicast address and port.
 func (s *serviceDiscovererLoop) broadcastAnCollectLoop(broadcastAddr *net.UDPAddr) ([]Service, error) {
 	// Create an context so we can tell the listener go routine to stop.
 	ctx, cancelCollection := context.WithCancel(context.Background())
 
-	// Start the collector in the background. For now we always do this, even though the BroadcastService function
-	// doesn't do anything with the collected services. This could be refactored out, but at the moment the way
-	// the code is structured makes it easier to keep in.
+	// Start the collector in the background
 	serviceCollector, err := s.startResponseCollectorInBackground(ctx)
 	if err != nil {
 		return nil, err
@@ -118,7 +118,7 @@ func (s *serviceDiscovererLoop) startResponseCollectorInBackground(ctx context.C
 	}
 
 	// Start up a listener that will collect the responses from services that respond to the broadcast. Since
-	// broadcastAndCollect() needs to know when the listener has exited we use a wait group to synchronize on.
+	// broadcastAndCollectLoop() needs to know when the listener has exited we use a wait group to synchronize on.
 	serviceCollector.wg.Add(1)
 	go serviceCollector.listenForAndCollectResponses(conn, ctx)
 

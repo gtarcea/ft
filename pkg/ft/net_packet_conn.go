@@ -50,3 +50,15 @@ func (pc6 PacketConn6) WriteTo(buf []byte, dst net.Addr) (int, error) {
 func (pc6 PacketConn6) SetMulticastTTL(i int) error {
 	return pc6.SetMulticastHopLimit(i)
 }
+
+// createNetPacketConn takes a net.PacketConn and maps it into a structure that conforms to
+// NetPacketConn interface. This allows us to use a single interface to handle both ipv6 and
+// ipv4 connections. The implementations for these connections have slightly different calls,
+// which these structures map over to create a unified interface.
+func createNetPacketConn(conn net.PacketConn, useIPV6 bool) NetPacketConn {
+	if useIPV6 {
+		return PacketConn6{PacketConn: ipv6.NewPacketConn(conn)}
+	} else {
+		return PacketConn4{PacketConn: ipv4.NewPacketConn(conn)}
+	}
+}
