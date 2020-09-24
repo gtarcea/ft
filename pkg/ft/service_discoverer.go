@@ -56,7 +56,7 @@ type ServiceDiscoverer struct {
 	packetConn NetPacketConn
 }
 
-// OnServiceFoundFunc reprsents the function to call when a new service is discovered. The function
+// OnServiceFoundFunc represents the function to call when a new service is discovered. The function
 // should return true if collection should stop, and false otherwise.
 type OnServiceFoundFunc func(service *Service) bool
 
