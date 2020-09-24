@@ -78,6 +78,8 @@ CollectionLoop:
 		// Add responding host to responses
 		s.responses[srcHost] = bufCopy
 
+		// if OnServiceFoundFunc returns true it means we should stop collection. False simply means
+		// we can continue (ie, perhaps it hasn't yet found a service it wants to use)
 		if s.sd.OnServiceFoundFunc(&Service{Address: srcHost, PayloadResponse: bufCopy}) {
 			s.collectorFinished = true
 			break
