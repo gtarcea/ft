@@ -67,8 +67,8 @@ func (c *connection) getActionForMessageAction(msgAction string) *action {
 }
 
 func (c *connection) runMiddleware() error {
-	for i := len(c.ctx.hero.middleware) - 1; i > 0; i-- {
-		if err := c.ctx.hero.middleware[i](c.ctx); err != nil {
+	for i := len(c.ctx.hero.middleware); i > 0; i-- {
+		if err := c.ctx.hero.middleware[i-1](c.ctx); err != nil {
 			return err
 		}
 	}
