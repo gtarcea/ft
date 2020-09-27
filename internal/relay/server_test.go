@@ -19,7 +19,7 @@ import (
 )
 
 func TestServerStartStop(t *testing.T) {
-	s := NewRelayServer(":10001", "")
+	s := NewServer(":10001", "")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		if err := s.Start(ctx); err != nil {
@@ -32,7 +32,7 @@ func TestServerStartStop(t *testing.T) {
 }
 
 func TestServerPakeMsg(t *testing.T) {
-	s := NewRelayServer(":10001", "")
+	s := NewServer(":10001", "")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		if err := s.Start(ctx); err != nil {

@@ -48,25 +48,25 @@ type relayList struct {
 }
 
 type Server struct {
-	relayList    relayList
-	address      string
-	password     string
-	serverStates *ft.State
-	currentState string
+	relayList relayList
+	address   string
+	password  string
+	states    *ft.State
 }
 
-func NewRelayServer(address string, password string) *Server {
+func NewServer(address string, password string) *Server {
 	server := &Server{
-		address:      address,
-		password:     password,
-		relayList:    relayList{relays: make(map[string]*Relay)},
-		serverStates: ft.NewState(),
+		address:   address,
+		password:  password,
+		relayList: relayList{relays: make(map[string]*Relay)},
+		states:    ft.NewState(),
 	}
 
-	server.serverStates.AddState("start", "pake")
-	server.serverStates.AddState("pake", "hello")
-	server.serverStates.AddState("hello", "external_ips", "go")
-	server.serverStates.AddState("external_ips", "go")
+	server.states.AddState("start", "pake")
+	server.states.AddState("pake", "hello")
+	server.states.AddState("hello", "external_ips", "go")
+	server.states.AddState("external_ips", "go")
+	server.states.SetStartState("start")
 
 	return server
 }
@@ -77,16 +77,11 @@ func (s *Server) Start(c context.Context) error {
 	h.Action("pake", s.authenticateHandler)
 	h.Action("hello", s.helloHandler)
 	h.Action("ready", s.readyHandler)
-	s.currentState = "start"
 	return h.Start(c)
 }
 
 func (s *Server) validStateMiddleware(c hero.Context) error {
-	if !s.serverStates.IsValidNextState(s.currentState, c.Action()) {
-		return ft.ErrInvalidNextState
-	}
-
-	return nil
+	return s.states.ValidateAndAdvanceToNextState(c.Action())
 }
 
 func (s *Server) authenticateHandler(c hero.Context) error {
@@ -112,7 +107,6 @@ func (s *Server) authenticateHandler(c hero.Context) error {
 	}
 
 	c.SetEncryptionKey(sharedKey)
-	s.currentState = "pake"
 	return c.TurnEncryptionOn()
 }
 
@@ -145,7 +139,6 @@ func (s *Server) helloHandler(c hero.Context) error {
 			// should never happen
 		}
 
-		s.currentState = "hello"
 		return nil
 	}
 
@@ -170,5 +163,6 @@ func (s *Server) helloHandler(c hero.Context) error {
 }
 
 func (s *Server) readyHandler(c hero.Context) error {
+	_ = c
 	return nil
 }
