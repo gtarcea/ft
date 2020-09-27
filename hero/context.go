@@ -21,6 +21,7 @@ type Context interface {
 	JSON(string, interface{}) error
 	WriteMsg(action string, body interface{}) error
 	ReadMsg(i interface{}) error
+	Action() string
 }
 
 type ctx struct {
@@ -103,4 +104,8 @@ func (c *ctx) ReadMsg(i interface{}) error {
 	}
 
 	return json.Unmarshal(msg.Body, i)
+}
+
+func (c *ctx) Action() string {
+	return c.msg.Action
 }
