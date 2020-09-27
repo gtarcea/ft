@@ -19,7 +19,7 @@ import (
 )
 
 func TestServerStartStop(t *testing.T) {
-	s := NewRelayServer2(":10001", "")
+	s := NewRelayServer(":10001", "")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		if err := s.Start(ctx); err != nil {
@@ -32,7 +32,7 @@ func TestServerStartStop(t *testing.T) {
 }
 
 func TestServerPakeMsg(t *testing.T) {
-	s := NewRelayServer2(":10001", "")
+	s := NewRelayServer(":10001", "")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		if err := s.Start(ctx); err != nil {
@@ -46,8 +46,8 @@ func TestServerPakeMsg(t *testing.T) {
 		t.Fatalf("Couldn't connect to server")
 	}
 
-	pw := gospake2.NewPassword(RelayPassword)
-	spake := gospake2.SPAKE2Symmetric(pw, gospake2.NewIdentityS(RelayAppId))
+	pw := gospake2.NewPassword(Password)
+	spake := gospake2.SPAKE2Symmetric(pw, gospake2.NewIdentityS(AppId))
 	pakeMsgBody := spake.Start()
 	pake1 := msgs.Pake{Body: pakeMsgBody}
 	body, err := json.Marshal(pake1)
