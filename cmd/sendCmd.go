@@ -16,6 +16,11 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/gtarcea/ft/pkg/ft"
 
 	"github.com/spf13/cobra"
 )
@@ -49,4 +54,13 @@ func init() {
 
 func runSendCmd(cmd *cobra.Command, args []string) {
 	fmt.Println("send called")
+	c := ft.NewClient(nil)
+	if err := c.ConnectToRelay(); err != nil {
+		fmt.Println("Unable to connect to relay server")
+	}
+	fmt.Println("Connected!")
+	quit := make(chan os.Signal)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	fmt.Println("Shutting down client")
 }

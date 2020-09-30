@@ -2,6 +2,7 @@ package hero
 
 import (
 	"fmt"
+	"io"
 	"net"
 
 	"github.com/apex/log"
@@ -33,8 +34,13 @@ func (c *connection) handleConnection() {
 			return
 		default:
 			msg, err := c.readMsg()
-			if err != nil {
+			switch {
+			case err == io.EOF:
+				_ = c.conn.Close()
+				return
+			case err != nil:
 				continue
+			default:
 			}
 			if err := c.runMsgAction(msg); err != nil {
 				log.Debugf("Action returned error: %s", err)

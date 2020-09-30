@@ -116,7 +116,7 @@ func ReadAndDecryptFromConn(conn net.Conn, key []byte) ([]byte, int, error) {
 	)
 
 	if encryptedBytes, n, err = ReadFromConn(conn); err != nil {
-		fmt.Println("Read failed")
+		fmt.Println("Read failed", err)
 		return nil, 0, err
 	}
 

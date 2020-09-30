@@ -15,7 +15,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/gtarcea/ft/internal/relay"
 
 	"github.com/spf13/cobra"
 )
@@ -48,5 +54,19 @@ func init() {
 }
 
 func runRelayServerCmd(cmd *cobra.Command, args []string) {
-	fmt.Println("relayServer called")
+	fmt.Println("Starting RelayServer...")
+	server := relay.NewServer(":10001", relay.Password)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		if err := server.Start(ctx); err != nil {
+			fmt.Println("Unable to start RelayServer")
+			return
+		}
+	}()
+
+	fmt.Println("Relay Server Started...")
+	quit := make(chan os.Signal)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	cancel()
 }
