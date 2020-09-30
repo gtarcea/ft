@@ -14,7 +14,7 @@
 
 package main
 
-import "github.com/gtarcea/ft/cmd/ft/cmd"
+import "github.com/gtarcea/ft/cli/ft/cmd"
 
 func main() {
 	cmd.Execute()
