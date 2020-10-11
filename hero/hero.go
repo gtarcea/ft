@@ -56,6 +56,24 @@ func (h *Hero) Start(ctx context.Context) error {
 	return nil
 }
 
+func (h *Hero) Connect(ctx context.Context, address string, startState string) error {
+	var (
+		err  error
+		conn net.Conn
+	)
+	if conn, err = net.DialTimeout("tcp", address, 3*time.Second); err != nil {
+		return err
+	}
+
+	action := h.actions[startState]
+	c := newConnection(h, conn)
+	_ = action
+	_ = c
+
+	// Run start action and then drop into c.handleConnection
+	return nil
+}
+
 func (h *Hero) acceptLoop() {
 	tcpListener := h.listener.(*net.TCPListener)
 AcceptLoop:
