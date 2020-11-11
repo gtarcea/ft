@@ -136,5 +136,6 @@ func ReadAndDecrypt(conn net.Conn, key []byte) ([]byte, int, error) {
 	if err != nil {
 		fmt.Println("gcm.Open failed")
 	}
+
 	return unencryptedBytes, n - 12, err
 }
